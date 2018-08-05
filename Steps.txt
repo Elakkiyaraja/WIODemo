@@ -4,6 +4,6 @@ Pre-requisites:
 3. Install Selenium Standalone server and webdriver io.
 4. Install mocha and Chai libraries
 
-Steps:
+Steps
 1. start node server run "npm start" from project folder
 2. run "npm Test" in new command prompt
