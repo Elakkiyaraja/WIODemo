@@ -1,0 +1,308 @@
+/* globals define */
+/*
+  Purpose:
+    - to handle hover and click of the header menus
+
+  Dependencies
+    - jquery
+    - Mask
+    - Data
+
+*/
+
+(function closure(root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define('header.dropdownmodule', ['jquery', 'header.mask', 'header.data'],
+      function load(jQuery, headerMask, headerData) {
+        return factory(root, jQuery, headerMask, headerData);
+      });
+  } else {
+    // For non-AMD module, expose this to global (will also be useful for test cases)
+    /*eslint-disable*/
+    var _hfapp = THD.Utility.Namespace.createNamespace('THD.HFApp');
+    _hfapp.ddflyout = factory(root, jQuery, THD.HFApp.mask);
+    /*eslint-enable*/
+  }
+})(this, function factory(root, $, headerMask, headerData) {
+  //debugger;
+  var ddflyout = {};
+  var privateMethods = {};
+
+  ddflyout.templates = {};
+
+  //config the different flyouts here
+  var menuConfig = headerData.getMenuConfig();
+
+  privateMethods.setMenuState = function _setMenuState(menuID, value){
+    if(menuConfig[menuID].isActive !== 'undefined'){
+      menuConfig[menuID].isActive = value;
+    }
+
+  };
+  privateMethods.openMenus = function _openMenu(menuID){
+    privateMethods.setMenuState(menuID, true);
+    $('.' + menuConfig[menuID].name + '__link--active').removeClass(menuConfig[menuID].name + '__link--active');
+
+    $('.ShoppingLinks__link[data-id="' + menuConfig[menuID].name + '"]')
+      .addClass('ShoppingLinks__link--force-open');
+
+    $('.ShoppingLinks__link[data-id="' + menuConfig[menuID].name + '"]').addClass('js__flyout--open');
+    
+    $('.' + menuConfig[menuID].menuClass).addClass(menuConfig[menuID].menuClass +'--open');
+  };
+
+  privateMethods.closeMenu = function _closeMenu(menuID){
+    privateMethods.setMenuState(menuID, false);
+      $('.ShoppingLinks__link[data-id="' + menuID + '"]')
+        .removeClass('ShoppingLinks__link--force-open')
+        .off('.flyout');
+      $('.MainFlyout')
+      .removeClass('MainFlyout--open')
+      .removeClass('MainFlyout--panels-3')
+      .removeClass('MainFlyout--panels-4')
+      .find('.MainFlyout__link').removeClass('MainFlyout__link--active');
+
+      $('.' + menuConfig[menuID].menuClass).removeClass(menuConfig[menuID].menuClass +'--open');
+      headerMask.destroy();
+    };
+
+  privateMethods.closeAllMenus = function _closeAllMenus(){
+    Object.keys(menuConfig).forEach(function(key) {
+      privateMethods.closeMenu(key);
+    });
+    privateMethods.removeHoverIntent('.Header3');
+  };
+
+  // privateMethods.closeAllbutHoverClickMenu = function _closeAllbutHoverClickMenu(menuID){
+  //   privateMethods.setMenuState(menuID, false);
+  //   Object.keys(menuConfig).forEach(function(key) {
+  //     if (key !== menuID){
+  //       $('.ShoppingLinks__link[data-id="' + key + '"]')
+  //         .removeClass('ShoppingLinks__link--force-open')
+  //         .off('.flyout');
+  //
+  //       $('.' + menuConfig[key].menuClass).removeClass(menuConfig[key].menuClass +'--open');
+  //     }
+  //   });
+  // };
+
+  privateMethods.toggleMenu = function _toggleMenu(event){
+    var $this = $(this);
+    var menuID = $this.data('id');
+
+    if (!privateMethods.isSurfacePro() && menuID){
+      $(document).trigger('closeHeaderTooltips');
+      if(headerData.isDropDown() || menuID === 'departmentsFlyout'){
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      if (menuConfig[menuID].isActive && event.type !== 'hoverintent'){
+        privateMethods.closeMenu(menuID);
+      } else {
+        privateMethods.closeAllMenus();
+        privateMethods.setMenuState(menuID, true);
+        if(headerData.isDropDown() || menuID === 'departmentsFlyout'){
+          headerMask.show();
+          privateMethods.openMenus(menuID);
+        }
+      }
+    } else {
+      privateMethods.closeAllMenus();
+    }
+    privateMethods.closeTypeAhead();
+  };
+
+  privateMethods.isSurfacePro = function isSurfacePro() {
+    if(!(navigator.userAgent).match(/Edge/g)){
+          return (navigator.userAgent.match(/Edge/g) !== null) ? true : false;
+      }
+      else{
+         return false;
+      }
+  };
+
+  privateMethods.removeHoverIntent = function _removeHoverIntent($element) {
+    $($element).off('.hoverIntent');
+    return $element;
+  };
+
+  privateMethods.triggerHoverintent = function _triggerHoverIntent() {
+    $(this).trigger({
+      type: 'hoverintent',
+      target: this
+    });
+  };
+
+  privateMethods.breakpointChanged = function _breakpointChanged(event, eventInfo) {
+    var newInList = ['lg', 'md', 'sm'].indexOf(eventInfo.new);
+    var oldInList = ['default', 'xs'].indexOf(eventInfo.old);
+
+    if ((newInList > -1) && (oldInList > -1)) {
+      // If we're in a larger break point
+      $(document).trigger('showSimpleFlyout', false);
+    }else if ((newInList === -1) && (oldInList === -1)) {
+      // If we're in a smaller break point
+      privateMethods.closeAllMenus();
+    }
+  };
+
+  privateMethods.closeOnSearchOpen = function _closeOnSearchOpen(event, isOpen) {
+    if (isOpen) {
+      // $(document).trigger('showSimpleFlyout', false);
+      privateMethods.closeAllMenus();
+    }
+  };
+  
+  privateMethods.closeTypeAhead = function closeTypeAhead() {
+	    var isSearchBarFocused = ($('#headerSearch').is(':focus'));
+		if (isSearchBarFocused) {
+		  $('#headerSearch').blur();
+		  $('#typeAheadFlyOut').removeClass('typeahead__show');
+		}
+	 };
+  
+  privateMethods.initialize = function initialize(){
+    $(document)
+      .on('click touchend hoverintent', '.Header3 .ShoppingLinks__link', privateMethods.toggleMenu)
+      .on('click touchend hoverintent', '.Mask', privateMethods.closeAllMenus)
+      .on('click touchend', '.Header3', privateMethods.closeAllMenus)
+      .on('closeAllMenus', privateMethods.closeAllMenus)
+      .on('breakpointChanged', privateMethods.breakpointChanged)
+      .on('searchState', privateMethods.closeOnSearchOpen)
+      .hoverIntent({
+        selector: '.Header3 .ShoppingLinks__link',
+        over: privateMethods.triggerHoverintent,
+        out: $.noop
+      })
+      .hoverIntent({
+        selector: '.Header3 .HeaderLogo',
+        over: privateMethods.triggerHoverintent,
+        out: $.noop
+      });
+  };
+  
+  
+
+  /*
+   * Public Methods
+   */
+
+
+  ddflyout.templates.diyandhs = '' +
+    '<section class="grid diyFlyout__level1">' +
+      '<div class="col__12-12 diyFlyout__wrapper">' +
+        '<div class="grid">' +
+          '{{#links}}' +
+              '<div class="col__3-12">' +
+                '<div class="content">' +
+
+                  /* based on CTA, image is rendered as clickable or only image */
+                  '<div class="content_image">' +
+                    '{{#link}}' +
+                      '<a href="{{link}}" alt="{{{title}}}">' +
+                        '<img src="{{image}}" class="diyFlyout__image stretchy">' +
+                      '</a>' +
+                    '{{/link}}' +
+
+                    '{{^link}}' +
+                      '<img src="{{image}}" class="diyFlyout__image stretchy">' +
+                    '{{/link}}' +
+                  '</div>' +
+
+                  /* based on CTA, text is rendered as clickable or only text */
+                  '{{#link}}' +
+                    '<a href="{{link}}" class="cta--inline diyFlyout__level2link">' +
+                      '<span class="cta__text">' +
+                        '{{{title}}}' +
+                      '</span> <span class="cta__arrow"></span>' +
+                    '</a>' +
+                  '{{/link}}' +
+                  '{{^link}}' +
+                    '<h4 class="cta__text diyFlyout__level2text">' +
+                        '{{{title}}}' +
+                    '</h4>' +
+                  '{{/link}}' +
+                  '<ul class="list list--type-plain diyFlyout__list">' +
+                    '{{#sublinks}}' +
+                      '<li class="list__item">' +
+                        '<a href="{{link}}" class="list__link diyFlyout__level3link">{{{title}}}</a>' +
+                      '</li>' +
+                    '{{/sublinks}}' +
+                  '</ul>' +
+                '</div>' +
+              '</div>' +
+          '{{/links}}' +
+        '</div>'+
+      '</div>' +
+    '</section>';
+
+ddflyout.templates.shopbyroom=''+
+  '<section class="grid diyFlyout__level1">' +
+  '<div class="col__12-12 roomFlyout__wrapper">' +
+    '<div class="grid">' +
+      '{{#links}}' +
+          '<div class="col__1-5">' +
+            '<div class="content">' +
+              /* based on CTA, image is rendered as clickable or only image */
+              '<div class="content_image">' +
+                '{{#link}}' +
+                  '<a href="{{link}}" alt="{{{title}}}">' +
+                    '<img src="{{image}}" class="roomFlyout__image">' +
+                  '</a>' +
+                '{{/link}}' +
+                '{{^link}}' +
+                '<img src="{{image}}" class="diyFlyout__image stretchy">' +
+                '{{/link}}' +
+              '</div>' +
+              '{{#link}}' +
+              '<a href="{{link}}" class="cta--inline">' +
+                '<span>' +
+                  '{{{title}}}' +
+                '</span>' +
+              '</a>' +
+            '{{/link}}' +
+            '{{^link}}' +
+              '<h4 class="cta__text diyFlyout__level2text">' +
+                '{{{title}}}' +
+              '</h4>' +
+            '{{/link}}' +
+            '</div>' +
+          '</div>' +
+      '{{/links}}' +
+    '</div>'+
+  '</div>' +
+    '{{#banner}}' +
+      '{{#hidel2level}}'+
+        '<div class="col__12-12 content_image roomFlyout__banner" >' +
+        '{{#blink}}' +
+          '<a href="{{{blink}}}" class="cta--inline roomFlyout__level2link">' +	
+          '<div class="roomFlyout__bannerContent">' +
+          '<span class="u__husky u__text--reverse u__left"> {{{btitle}}} </span>'+
+          '<span class="cta__text u__float-clear u__left">{{{btitle2}}}</span>' +
+          '<span class="roomFlyout__arrow"> <img src="//www.homedepot.com/hdus/en_US/DTCCOMNEW/fetch/Category_Pages/Decor/Rooms_and_Styles/caret-white.svg" /> </span>'+
+          '</div>' +
+          '<img src="{{bimage}}" class="stretchy">' +
+          '</a>' +
+        '{{/blink}}' +
+        '</div>' +
+      '{{/hidel2level}}'+
+      '{{^hidel2level}}'+
+      '<div class="col__12-12 content_image roomFlyout__banner hide" >' +
+      '</div>' +
+      '{{/hidel2level}}'+
+    '{{/banner}}' +
+  '</section>';
+
+  ddflyout.init = function init() {
+    privateMethods.initialize();
+
+    return this;
+  };
+
+  ddflyout.getPrivateMethods = function getPrivateMethods() {
+    return privateMethods;
+  };
+
+  return ddflyout;
+
+});

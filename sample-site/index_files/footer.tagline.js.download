@@ -1,0 +1,52 @@
+/*
+	Dependencies
+		- jquery
+		- THD Namespace
+*/
+(function closure(root, factory) {
+	if (typeof define === 'function' && define.amd) {
+    /* istanbul ignore else  */
+		define('footer.tagline', ['jquery', 'cookie-utils'], function load(jQuery, cookieUtils) {
+			return factory(jQuery, cookieUtils);
+		});
+	} else{
+		// For non-AMD module, expose this to global (will also be useful for test cases)
+		/*eslint-disable*/
+		var _hfapp = THD.Utility.Namespace.createNamespace('THD.HFApp');
+		_hfapp.tagline = factory(jQuery, cookieUtils);
+		/*eslint-enable*/
+	}
+})(this, function factory($, cookieUtils) {
+	var tagline = {};
+	var privateMethods = {};
+	// Private Methods
+	var template = {
+		betaTagline: 'Home Improvement Made Easy.'
+	};
+
+	privateMethods.determineMessage = function determineMessage() {
+		var isBeta = cookieUtils.readCookie('HD_DC') === 'beta';
+		if (isBeta) {
+			$('#footerTagline').text(template.betaTagline);
+		}
+		return privateMethods;
+	};
+
+	privateMethods.veriSign = function veriSign(e) {
+		e.preventDefault();
+	};
+
+	tagline.init = function init() {
+		$(document)
+			.on('ready', privateMethods.determineMessage)
+			.on('click', '#veriSignImg', privateMethods.veriSign);
+		return this;
+	};
+
+	// To be used for testing only...
+	tagline.getPrivateMethods = function getPrivateMethods() {
+		return privateMethods;
+	};
+
+	return tagline;
+});

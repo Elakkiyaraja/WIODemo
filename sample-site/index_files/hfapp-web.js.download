@@ -1,0 +1,82 @@
+define('hfapp-web', [
+  'jquery',
+  'mustache',
+  'utils.minicart',
+  'header.cart',
+  'header.logo',
+  'header.dropdownmodule',
+  'header.mainflyout',
+  'header.simpleflyout',
+  'header.diyflyout',
+  'header.hsflyout',
+  'header.shopbyroom',
+  'header.myaccount',
+  'header.search',
+  'header.storefinder.core',
+  'header.storefinder',
+  'header.tooltips',
+  'header.shoppinglinks',
+  'header.tasklinks',
+  'footer.email',
+  'footer.tagline',
+  'localizationPopup',
+  'global.modal',
+  'global.gestureHandler',
+  'global.dynamicRatings'
+], function load(
+  $,
+  mustache,
+  miniCart,
+  headerCart,
+  headerLogo,
+  headerDropDowns,
+  headerMainFlyout,
+  headerSimpleFlyout,
+  headerDIYFlyout,
+  headerHsFlyout,
+  headerShopByRoom,
+  headerMyaccount,
+  headerSearch,
+  headerStorefinderCore,
+  headerStoreFinder,
+  headerTooltips,
+  headerShoppingLinks,
+  headerTaskLinks,
+  footerEmail,
+  footerTagline,
+  localizationPopup,
+  globalModal,
+  gestureHandler,
+  dynamicRatings
+  ) {
+  return {
+    init: function init() {
+      return {
+        headerCart: headerCart.init(),
+        mainFlyout: headerMainFlyout.init(),
+        simpleFlyout: headerSimpleFlyout.init(),
+        diyFlyout: headerDIYFlyout.init(),
+        hsFlyout: headerHsFlyout.init(),
+        roomFlyout: headerShopByRoom.init(),
+        headerDropDowns: headerDropDowns.init(),
+        headerLogo: headerLogo.init(),
+        headerMyaccount: headerMyaccount.init(),
+        headerSearch: headerSearch.init(),
+        headerTooltips: headerTooltips.init(),
+        headerStorefinderCore: headerStorefinderCore.init(),
+        headerStoreFinder: headerStoreFinder.init(),
+        headerShoppingLinks: headerShoppingLinks.init(),
+        headerTaskLinks: headerTaskLinks.init(),
+        footerEmail: footerEmail.init(),
+        footerTagline: footerTagline.init(),
+        localizationPopup: localizationPopup.init(),
+        globalModal: globalModal.init(),
+        gestureHandler: gestureHandler.init(),
+        dynamicRatings: dynamicRatings.init()
+      };
+    },
+    enableThrottleForCart: function enableThrottleForCart() {
+      headerCart.cartThrottle = true;
+    }
+  };
+});

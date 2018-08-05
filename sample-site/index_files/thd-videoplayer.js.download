@@ -1,0 +1,135 @@
+(function closure(root, factory) {
+	if (typeof define === 'function' && define.amd) {
+		define(['thd-window'], factory);
+	} else if (typeof module !== 'undefined' && typeof module.exports !== 'undefined') {
+		module.exports = factory();
+	} else {
+		/* eslint-disable */
+		THD = typeof THD === 'undefined' ? {} : THD;
+		THD.Global = typeof THD.Global === 'undefined' ? {} : THD.Global;
+		THD.Global.BCVideoPlayer = factory(window);
+		/* eslint-enable */
+	}
+})(this, function factory(window) {
+
+	var BrightcoveVideoPlayerHTML5 = function BrightcoveVideoPlayerHTML5(videoID, params){
+		this.player = null;
+		this.listeners = {};
+		this.params = {
+			videoID: videoID,
+			account: '66036796001',
+			player: '4JE-ofbdg',
+			autoplay: true
+		}
+
+		for (var key in params) {
+			if (params.hasOwnProperty(key)) {
+				this.params[key] = params[key];
+			}
+		}
+
+		this.markup = '<video id="bcvideo_' + this.params.videoID + '" data-embed="default" class="video-js" controls></video>';
+		this.scriptURL = '//players.brightcove.net/' + this.params.account  +'/' + this.params.player + '_default/index.min.js';
+	}
+
+
+	BrightcoveVideoPlayerHTML5.prototype.render = function render(div){
+		try {
+			window.document.querySelector(div).innerHTML = this.markup;
+			// Call to load Brightcove script dynamically.
+			loadBCScript.apply(this);
+		} catch(error) {
+			// Catch errors
+		}
+	};
+
+	BrightcoveVideoPlayerHTML5.prototype.getURL = function getURL() {
+		return this.scriptURL;
+	};
+
+	//Use this with caution. I've seen instances where dispose() throws errors. BrightCove said they "fixed" it, but i've still seen it.
+	BrightcoveVideoPlayerHTML5.prototype.destroy = function destroy(){
+		if(!this.player) return;
+
+		this.player.pause();
+		this.player.dispose();
+	};
+
+	BrightcoveVideoPlayerHTML5.prototype.listen = function listen(event, callback) {
+		this.listeners[event] = callback;
+	};
+
+	BrightcoveVideoPlayerHTML5.prototype.trigger = function trigger(event) {
+		if(this.listeners[event]) this.listeners[event]();
+	};
+
+	// Private methods
+
+	function loadBCVideo(bc){
+		var _self = this;
+		var player = window.document.querySelector('#bcvideo_' + _self.params.videoID);
+		player.setAttribute('data-account', _self.params.account);
+		player.setAttribute('data-player', _self.params.player);
+		player.setAttribute('data-video-id', _self.params.videoID);
+		bc(player);
+		//This code was given to us from BrightCove. We shouldnt be referencing global 'bcPlayer', but thats how they asked us to do this.
+		_self.player = videojs('bcvideo_' + _self.params.videoID);
+
+		_self.player.on('loadedmetadata',function(){
+			if(_self.params.autoplay) {
+				_self.player.play();
+			} else {
+				_self.player.pause();
+			}
+			//$(document).trigger('BRIGHTCOVE_VIDEO_LOADED',{ videoID: this.params.videoID, videoName: bcPlayer.mediainfo.name })
+		});
+		
+	}
+
+	function loadBCScript() {
+		var _self = this;
+		if(typeof require !== "undefined") {
+			require.config({
+				paths: {
+					'bc': 'empty:'
+				}
+			});
+			require([_self.getURL()], function(){
+				_self.trigger('scriptHasLoaded');
+				//the 'bc' module is defined inside the script we load from BrightCove
+				require(['bc'], loadBCVideo.bind(_self));
+
+			});				
+		} else {
+		 	var script = window.document.createElement("script")
+		    script.type = "text/javascript";
+
+		    if (script.readyState) {  // IE
+		        script.onreadystatechange = function() {
+		            if (script.readyState == "loaded" ||
+		                    script.readyState == "complete") {
+		                script.onreadystatechange = null;
+		            	_self.trigger('scriptHasLoaded');
+		                loadBCVideo.call(_self, window.bc);
+		            }
+		        };
+		    } else {  // Others
+		        script.onload = function() {
+		        	_self.trigger('scriptHasLoaded');
+		        	loadBCVideo.call(_self, window.bc);
+		        }
+		    }
+
+		    script.src = _self.getURL();
+		    window.document.getElementsByTagName("head")[0].appendChild(script);
+		}
+	}
+
+	return {
+		create: function(videoID, params) {
+			return new BrightcoveVideoPlayerHTML5(videoID, params)
+		}
+	};
+
+
+});

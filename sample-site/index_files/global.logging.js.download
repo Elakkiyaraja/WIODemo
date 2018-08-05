@@ -1,0 +1,61 @@
+/*--------------------------------------------------------------------------------
+	New, Safe Logging Code, JNH 11-28-2012
+	Usage: THD.log('Message', variable);
+	To turn logging on or off just set THD.isLogging
+--------------------------------------------------------------------------------*/
+(function closure(root, factory) {
+	if(typeof define === 'function' && define.amd) {
+		define(['global.namespace'],
+			function load(THD) {
+				return factory(THD);
+			});
+	} else{
+		// For non-AMD module, expose this to global (will also be useful for test cases)
+		/* eslint-disable*/
+		THD.log = factory(THD).log;
+		/*eslint-enable*/
+	}
+})(this, function factory(THD) {
+	THD.isLogging = false;
+	THD.log = function log() {
+		var logArgs = Array.prototype.slice.call(arguments); /* Fix for ION-1733 */
+
+		// Based on code from: https://github.com/cpatik/console.log-wrapper/blob/master/consolelog.js
+		// Tell IE9 to use its built-in console
+		if (Function.prototype.bind && (typeof console === 'object' || typeof console === 'function') && typeof console.log === 'object') {
+			if (Array.prototype.forEach) {
+				['log', 'info', 'warn', 'error', 'assert', 'dir', 'clear', 'profile', 'profileEnd'].forEach(function each(method) {
+					console[method] = this.call(console[method], console);
+				}, Function.prototype.bind);
+			}
+		}
+
+		// Modern browsers
+		if (typeof console !== 'undefined' && typeof console.log === 'function') {
+			return function logger() {
+				if (THD.isLogging) {
+					// Single argument, which is a string
+					if (logArgs.length === 1 && typeof logArgs[0] === 'string') {
+						console.log((logArgs).toString());
+					} else {
+						console.log(logArgs);
+					}
+				}
+			};
+		}
+
+		// Check IE8 - Originally used !Function.prototype.bind && as well, but prevented logging in IE9 with 7 compat
+		if (typeof console !== 'undefined' && typeof console.log === 'object') {
+			return function logger() {
+				if (THD.isLogging) {
+					Function.prototype.call.call(console.log, console, logArgs);
+				}
+			};
+		}
+		return function() {};
+	};
+
+	return {
+		log: THD.log
+	};
+});

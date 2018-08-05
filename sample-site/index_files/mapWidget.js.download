@@ -1,0 +1,43 @@
+define(['text!mapTemplate', 'storeFinderApi', 'text!pinSvg', 'mustache', 'jquery'], function(mapTemplate, storeFinderApi, pinSvg, mustache, $) {
+
+  return {
+    init: function(target, store) {
+      var $template = $(mustache.render(mapTemplate));
+      var lat = store.coordinates.lat;
+      var lng = store.coordinates.lng;
+
+      function loadMap() {
+        var map = new Microsoft.Maps.Map('#localStoreMap', { // eslint-disable-line
+          credentials: 'AoKTFnu3hdkRgVWl45fcxdz0WSDP6hroMDcPKXE4ZkQql3hPt3PtkCDwtNRCYgYA',
+          center: new Microsoft.Maps.Location(lat, lng), // eslint-disable-line
+          disablePanning: true,
+          disableZooming: true,
+          liteMode: true,
+          showDashboard: false,
+          zoom: 13
+        });
+
+        var pinOptions = {
+          htmlContent: pinSvg,
+          width: 30,
+          height: 40
+        };
+
+        var loc = new Microsoft.Maps.Location(lat, lng); // eslint-disable-line
+        var pin = new Microsoft.Maps.Pushpin(loc, pinOptions); // eslint-disable-line
+        map.entities.push(pin);
+
+        target.append($template);
+      }
+
+      if(typeof Microsoft !== 'undefined') {
+        loadMap();
+      } else {
+        require(['async!https://www.bing.com/api/maps/mapcontrol'], function load() {
+          loadMap();
+        });
+      }
+    }
+  };
+
+});

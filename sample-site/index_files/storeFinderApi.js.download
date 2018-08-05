@@ -1,0 +1,11 @@
+/* globals define */
+define(['jquery'], function($) {
+
+  var _url = '/StoreSearchServices/v2/storesearch?type=json&storeid=';
+
+  return {
+    getStoreForStoreId: function(storeId) {
+      return $.get(_url + storeId);
+    }
+  };
+});

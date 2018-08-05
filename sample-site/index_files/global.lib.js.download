@@ -1,0 +1,155 @@
+/* BOPIS 2 SUPPORT! NEED TO THINK THIS THROUGH!  */
+'use strict';
+(function closure(root, factory) {
+	if(typeof define === 'function' && define.amd) {
+		define(['global.namespace'], function load(THD) {
+			return factory(root, THD);
+		});
+	} else{
+		/* eslint-disable*/
+		window.globalLib = factory(root, THD);
+		/*eslint-enable*/
+	}
+})(this, function factory(root, THD) {
+	var globalLib = {};
+	// ////////////////////////////////////////////////////////////////////////////////////////
+	// This is the start of what should be in a lib.js file.
+	// This is a standalone js lib for basic catch all functions.
+	// The functions here should not rely on any functions that are not in this file.
+	// No jQuery, Prototype, Dojo, MooTools, etc.
+	//
+	// For now, we are designating the functions as FED controled with a prefix of "f_"
+	//
+	/*
+	 * bool f_isOnlyNumChars( val [, (bool) allowExtras] )
+	 *
+	 * Tests if val consists of only numeric characters.
+	 * +   An optional 2nd param allows dash(-), comma(,) and decimal(.)
+	 * +   Any non-false value will allow the extras. Leave out completely to avoid extras
+	 * +   This does not test that the number is a real number.
+	 * Ex:
+	 *    f_isOnlyNumChars("67.09") = false
+	 *    f_isOnlyNumChars("67.09", 1) = true
+	 *    f_isOnlyNumChars("-67.09") = false
+	 *    f_isOnlyNumChars("-67.09", 1) = true
+	 *    f_isOnlyNumChars("67.09", "no") = true (2nd is a non-false)
+	 *    f_isOnlyNumChars("ah2j", 1) = false
+	 *    f_isOnlyNumChars("ah2j") = false
+	 *    f_isOnlyNumChars("ahja") = false
+	 *    f_isOnlyNumChars("-.-,", 1) = false
+	 *    f_isOnlyNumChars("0x89f") = false (Real HEX Number, but not all num characters)
+	 *    f_isOnlyNumChars("0x89f", 1) = false (Real HEX Number, but not all num characters)
+	 *
+	 * Author: John Jimenez (johnajimenez_at_gmail_dot_com)
+	 */
+
+	function f_isOnlyNumChars(val, allowExtras) {
+		if (allowExtras) {
+			val = val.replace(/[-\.,]/g, '');
+		}
+		return Boolean(!(val.replace(/\d/g, '')));
+	}
+
+	globalLib.f_isOnlyNumChars = f_isOnlyNumChars;
+	/*
+	 * bool f_isNumeric( val )
+	 *
+	 * Tests if val is a number.
+	 * Ex:
+	 *    f_isNumeric("67.09") = true
+	 *    f_isNumeric("-67.09") = true
+	 *    f_isNumeric("ahja") = false
+	 *    f_isNumeric("ah2j") = false
+	 *    f_isNumeric("0x89f") = true (Real HEX Number)
+	 *    f_isNumeric("10e3") = true (Real SN Number)
+	 *
+	 * Author: John Jimenez (johnajimenez_at_gmail_dot_com)
+	 */
+
+	function f_isNumeric(val) {
+		return Boolean(((val - 0) == val) && (val.length > 0));
+	}
+	globalLib.f_isNumeric = f_isNumeric;
+	/*
+	 * bool f_isAlpha( val [, (bool) allowSpaces] )
+	 *
+	 * Tests if val consists of only alphabetic characters.
+	 * +   An optional 2nd param allows spaces, tabs, and new lines characters
+	 * +   Any non-false value will allow spaces. Leave out completely to avoid extras
+	 * Ex:
+	 *    f_isAlpha("Sample") = true
+	 *    f_isAlpha("I Pass", 1) = true
+	 *    f_isAlpha("I pass", "no") = true (2nd is a non-false)
+	 *    f_isAlpha("Sam-ple") = false
+	 *    f_isAlpha("I fail") = false
+	 *    f_isAlpha("ah2j") = false
+	 *
+	 * Author: John Jimenez (johnajimenez_at_gmail_dot_com)
+	 */
+
+	function f_isAlpha(val, allowSpaces) {
+		if (allowSpaces) {
+			val = val.replace(/\s/g, '');
+		}
+		return Boolean(!(val.replace(/[a-z]/ig, '')));
+	}
+	globalLib.f_isAlpha = f_isAlpha;
+
+
+	//----------appending value to citi card link-----------------//
+	function appendValueToCitiLink() {
+		var citiValue = getTHDTotalCartAmount().substr(1),
+			ctLinks = document.links, ct;
+
+		if(citiValue == ''){
+			citiValue = '0.00';
+		}
+
+		citiValue = citiValue.split(',').join('');
+
+		for (ct = 0; ct < ctLinks.length; ct++) {
+			if (ctLinks[ct].href.indexOf('www.citicards.com/cards/acq/Apply.do') !== -1) {
+				ctLinks[ct].href = ctLinks[ct].href + "&SALE_AMT=" + citiValue;
+			}
+		}
+	}
+	globalLib.appendValueToCitiLink = appendValueToCitiLink;
+
+	/*
+		encode/decode component: 
+				standard methods for encoding/decoding components
+
+			Usage:
+							THD.Global.Encode.encode('test / "param"');
+							THD.Global.Encode.decode('test%2520%252F%2520%2522param%2522');
+	*/
+
+	(function () {
+		globalLib.encodeComponent = function (input) {
+			var result = input;
+			result = encodeURIComponent(result);
+			result = encodeURIComponent(result);
+			return result;
+		};
+
+		globalLib.decodeComponent = function (input) {
+			var result = input;
+			result = decodeURIComponent(result);
+			result = decodeURIComponent(result);
+			return result;
+		};
+
+	}(
+		THD.Utility.Namespace.createNamespace('THD.Global')
+	));
+
+	!function (w){
+		//public function for legacy calls - delete us
+		w.attachQuickViewButtons = function () { return; };
+		w.attachOverlays = function( ){ return; }; 
+		w.popup = function(){ return };
+	}(window);
+
+	return globalLib;
+
+});

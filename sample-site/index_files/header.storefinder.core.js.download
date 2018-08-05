@@ -1,0 +1,805 @@
+/* globals Microsoft, define */
+/*
+  Purpose:
+    - Module for the store finder dropdown and all it's interactions
+
+  Dependencies:
+    - jQuery
+    - Mustache
+    - THD Namespace
+    - Microsoft
+    - jQuery fancybox
+*/
+(function closure(root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define('header.storefinder.core', ['jquery', 'mustache', 'global.namespace', 'global.utility', 'utils.url', 'header.analytics', 'Localizer'],
+      function load(jQuery, Mustache, THD, globalUtility, utilsUrl, headerAnalytics, Localizer) {
+        return factory(root, jQuery, Mustache, THD, globalUtility, utilsUrl, headerAnalytics, Localizer);
+      });
+  } else {
+    // For non-AMD module, expose this to global (will also be useful for test cases)
+    /* eslint-disable */
+    var _hfapp = THD.Utility.Namespace.createNamespace('THD.HFApp');
+    _hfapp.storeFinderCommon = factory(root, jQuery,  Mustache, THD, globalUtility, THD.Utils.Url, THD.HFApp.analytics, Localizer);
+    /* eslint-enable */
+  }
+})(this, function factory(root, $, Mustache, THD, globalUtility, utilsUrl, headerAnalytics, Localizer) {
+  var storeFinder = {};
+  var privateMethods = {};
+
+  var privateData = {};
+  privateData.templates = {};
+  privateData.templates.storeButtonLocalized = 'You\'re shopping <div class="MyStore__store">{{store}}</div>';
+  privateData.templates.storeButtonNotLocalized = 'To See Inventory <div class="MyStore__store">Choose A Store</div>';
+  privateData.templates.myStoreInfo = '' +
+    '<div class="grid">' +
+      '{{#currentStore}}' +
+        '<div class="col__12-12">' +
+          '<h2 class="u__medium"><a href="//{{hostName.nonSecure}}{{url}}" class="">{{name}} #{{storeId}}</a></h2>' +
+        '</div>' +
+        '<div class="col__6-12">' +
+          '<ul class="StoreInfo">' +
+            '<li class="StoreInfo__item u__bold"><span style="color:{{statusColor}}">{{status}}</span><br/>{{statusMessage}}</li>' +
+            '<li class="StoreInfo__item">' +
+              '{{address.street}}<br />' +
+              '{{address.city}}, {{address.state}} {{address.postalCode}}<br />' +
+              '{{phone}}' +
+            '</li>' +
+            '<li class="StoreInfo__item">' +
+              '<a href="http://localad.homedepot.com/homedepot/?StoreRef={{storeId}}" class="u__legal">View Local Ad</a><br />' +
+              '<a href="//{{hostName.nonSecure}}{{url}}" class="u__legal">View Store Details</a>' +
+            '</li>' +
+          '</ul>' +
+        '</div>' +
+        '<div class="MyStore__map">' +
+          '<div id="myStoreMap"></div>' +
+        '</div>' +
+        '<div class="col__12-12 u--text-md">' +
+          '<hr class="MyStore__divider" />' +
+          '<a href="{{storeFinderHref}}" class="bttn-outline bttn-outline--primary {{overlayTriggerClass}}" rel="localizationModule"><span class="bttn__content">Find Other Stores</span></a>' +
+        '</div>' +
+      '{{/currentStore}}' +
+    '</div>' +
+  '';
+
+  var configs = {
+    // parameters for our find stores method
+    storeParams: {
+      radius: 50,
+      sourceAppId: 'storefinder',
+      largeequipment: false,
+      kitchenshowroom: false,
+      expandedflooringshowroom: false,
+      loadngo: false,
+      penskerental: false,
+      propane: false,
+      applianceshowroom: false,
+      toolrental: false,
+      keycutting: false,
+      wifi: false,
+      maxMatches: 1
+    },
+    oldStoreParams: {},
+    // options for our MS Map object
+    mapOptions: {
+      credentials: window.location.host === 'www.homedepot.com'
+        ? 'Aif9kL_IbQO95flnHttxLsFlCrSI7tAzf5FlUWJdLw-VN-J1LtxGVx6GUPrbnfqV'
+        : 'AkNGGZvSu6S4E2u-4qlTwo2KK6hEGZjXSGdl4wJ3aXcRULQPwLQrIhJF2ECG_GSZ',
+      height: 180,
+      width: 140,
+      showMapTypeSelector: false,
+      zoom: 13,
+      enableClickableLogo: false,
+      enableSearchLogo: false,
+      showDashboard: false,
+      showScalebar: false,
+      disableZooming: false,
+      disablePanning: true
+    },
+
+    // options for the MS Map push pin
+    pushPinOptions: {
+      width: 31,
+      height: 39,
+      visible: true
+    },
+    touchDelay: 325
+  };
+
+  privateMethods.getDeferred = function _getDeferred() {
+    return /* eslint-disable */$.Deferred()/* eslint-enable */;
+  };
+
+  privateMethods.initialize = function initialize() {
+    var initializeComplete = privateMethods.getDeferred();
+
+    if (storeFinder.localizationStateUnsure()) {
+      $(document).trigger('launchLocOverlay');
+      initializeComplete.resolve();
+    } else {
+      privateMethods.buildDropDown().then(initializeComplete.resolve);
+    }
+
+    return initializeComplete.promise();
+  };
+
+  // fetches the store info only when requested
+  privateMethods.getStoreData = function _getStoreData(storeId) {
+    var dataLoaded = privateMethods.getDeferred();
+
+    if (storeId !== '') {
+      configs.storeParams.address = storeId;
+    } else if (!configs.storeParams.hasOwnProperty('address')) {
+      configs.storeParams.address = Localizer.getLocalizedStore().zipcode;
+    }
+
+    if (typeof privateData.currentStore === 'undefined') {
+      // force the preloader off
+      privateMethods.togglePreloader(true);
+
+      privateMethods.determineHostName();
+
+      // save store data when fetchStores is done
+      privateMethods.getStoreInfo(storeId)
+        .then(privateMethods.saveStoreData)
+        .then(dataLoaded.resolve);
+    } else {
+      dataLoaded.resolve();
+    }
+
+    return dataLoaded.promise();
+  };
+
+
+  privateMethods.buildDropDown = function _buildDropDown() {
+    // Get Store ID
+    var storeId = privateMethods.getStoreID();
+    var storeLoaded = privateMethods.getStoreData(storeId);
+    // Load the bing map
+    var bingLoaded = privateMethods.fetchMap();
+    // sets overlay config
+    privateMethods.setOverlayConfig(privateMethods.getCurrentElement());
+    // when both both fetchStores & fetchMap promises are resolved then build the flyout
+    return $.when(storeLoaded, bingLoaded)
+      .then(function _onReadyToRender() {
+        // force the preloader off
+        privateMethods.togglePreloader(false);
+        var storeInfo = privateMethods.getCurrentStore();
+        // build status message based on user's access time
+        if(storeInfo && storeInfo.storeHours) {
+          var getDateCallback = function() { return new Date(); } // had to do this enable unit testing.
+          var storeStatus = privateMethods.buildStoreStatusMessage(storeInfo, getDateCallback);
+          privateData.currentStore.status = storeStatus.status;
+          privateData.currentStore.statusMessage = storeStatus.statusMessage;
+          privateData.currentStore.statusColor = storeStatus.statusColor;
+        }
+        // build the UI
+        return privateMethods.constructMyStoreInfo();
+      })
+      .then(privateMethods.constructMap);
+  };
+
+  privateMethods.constructMyStoreInfo = function constructMyStoreInfo() {
+    var currentStoreHTML = Mustache.render(privateData.templates.myStoreInfo, privateData);
+
+    $('#myStoreDropdown').html(currentStoreHTML);
+
+    return currentStoreHTML;
+  };
+
+  privateMethods.getStoreID = function getStoreID() {
+    var store = Localizer.getLocalizedStore();
+    return store ? store.storeId : '';
+  };
+
+  privateMethods.determineHostName = function determineHostName() {
+    privateData.hostName = {
+      current: (window.location.protocol === 'http:')
+        ? globalUtility.getHostNameNonSecure()
+        : globalUtility.getHostNameSecure(),
+      nonSecure: globalUtility.getHostNameNonSecure()
+    };
+  };
+
+  // show/hide the preloader ~ you have to keep up with the management
+  privateMethods.togglePreloader = function togglePreloader(state) {
+    var $preloader = $('.MyStore__preloaderSpinner');
+
+    $preloader.toggleClass('u--hide', (typeof state !== 'undefined') ? !state : $preloader.hasClass('u--hide'));
+  };
+
+  // Asynchronously fetches the 3rd party bing map.
+  // This calls readyState doesn't change from 1, therefore we bootstrap the promise
+  // Note: just because the AJAX call completes doesn't mean Virtual Earth JS has fully executed
+  privateMethods.fetchMap = function fetchMap() {
+    var bingLoaded = privateMethods.getDeferred();
+
+    if (typeof Microsoft !== 'undefined') {
+      bingLoaded.resolve();
+    } else {
+      $.ajax({
+        url: '//www.bing.com/api/maps/mapcontrol',
+        dataType: 'JSONP',
+        jsonp: 'onscriptload',
+        cache: true,
+        timeout: 5000,
+        complete: function complete() {
+          return bingLoaded.resolve();
+        }
+      });
+    }
+
+    return bingLoaded.promise();
+  };
+
+
+  // fetches the store data from the store finder method
+  privateMethods.fetchStores = function fetchStores() {
+    privateData.getStores = $.ajax({
+      url: '//' + privateData.hostName.current + '/StoreFinder/findStores',
+      type: 'POST',
+      dataType: 'JSONP',
+      data: { searchParams: JSON.stringify(configs.storeParams) },
+      timeout: 5000
+    });
+
+    return privateData.getStores;
+  };
+
+  // saves store info in memory
+  privateMethods.saveStoreData = function saveStoreData(data) {
+    if (data.stores) {
+      // store the first store
+      privateData.currentStore = data.stores[0];
+    } else {
+      console.log('Failed to load store data.');
+    }
+
+    return privateData.currentStore;
+  };
+
+  storeFinder.isSelfLocalized = function _isSelfLocalized() {
+    return Localizer.status.isSelfLocalized();
+  };
+
+  storeFinder.isAutoLocalized = function _isAutoLocalized() {
+    return Localizer.status.isAutoLocalized();
+  };
+
+  privateMethods.clearCurrentStore = function _clearCurrentStore() {
+    // cannot set to undefined... why is this here? Seems risky
+    delete privateData.currentStore;
+  };
+
+  privateMethods.createStoreTitle = function _createStoreTitle(isLocalized, isSelfOrAutoLocalized) {
+    var storeTitleHtml;
+
+    if (isLocalized && isSelfOrAutoLocalized) {
+      // Get the store name for the template
+      storeTitleHtml = Mustache.render(privateData.templates.storeButtonLocalized, {
+        store: Localizer.getLocalizedStore().name
+      });
+    } else {
+      // No mustache call because no variables
+      storeTitleHtml = privateData.templates.storeButtonNotLocalized;
+    }
+
+    return storeTitleHtml;
+  };
+
+  // builds the store title in the button
+  privateMethods.renderStoreTitle = function _renderStoreTitle() {
+    var isSelfOrAutoLocalized = storeFinder.isSelfLocalized() || (storeFinder.isAutoLocalized() && globalUtility.channel === 'web');
+    var storeTitleHtml = privateMethods.createStoreTitle(Localizer.status.isLocalized(), isSelfOrAutoLocalized);
+
+    // Not sure why we do this here...
+    privateMethods.clearCurrentStore();
+
+    // put it in the UI
+    $(document).trigger('updateStoreTitle', storeTitleHtml);
+  };
+
+  // Attempts to call a method up to a given number of times, recalling it after a delay on failure
+  privateMethods.attemptMultipleTimes = function _attemptMultipleTimes(trickyMethod, maxAttempts) {
+    var methodHandled = privateMethods.getDeferred();
+
+    // tracks how many times we've tried the tricky call
+    var tryCount = (parseInt(maxAttempts, 10) || 1);
+
+    var attemptTrickyMethod = function _attemptTrickyMethod() {
+      try {
+        // Try to call it
+        trickyMethod();
+
+        // resolve the promise
+        methodHandled.resolve();
+      } catch (e) {
+        // count this as an attempt
+        tryCount--;
+
+        // If we have tries left
+        if (tryCount === 0) {
+          methodHandled.reject('Exceeded the maximum number attempts to for handler.');
+        } else {
+          // call it again after a delay
+          setTimeout(attemptTrickyMethod, 250);
+        }
+      }
+    };
+
+    // Try to execute this thing
+    attemptTrickyMethod();
+
+    return methodHandled.promise();
+  };
+
+  // Attempts to call the Bing Map, but that canbe problematic
+  privateMethods.attemptToConstructBingMap = function _attemptToConstructBingMap() {
+    var lat = privateData.currentStore.coordinates.lat;
+    var lon = privateData.currentStore.coordinates.lng;
+    var pushpin;
+
+  if(typeof Microsoft === 'object') {
+
+    // update configs
+    configs.mapOptions.mapTypeId = Microsoft.Maps.MapTypeId.road;
+    configs.mapOptions.center =  new Microsoft.Maps.Location(lat, lon);
+    configs.pushPinOptions.icon = '//' + privateData.hostName.current + '/hf/img/svg/Finder.svg';
+
+    privateData.map = new Microsoft.Maps.Map(document.getElementById('myStoreMap'), configs.mapOptions);
+
+    if (!privateData.map) {
+      throw new Error('Bing Map not ready');
+    } else {
+      pushpin = new Microsoft.Maps.Pushpin(privateData.map.getCenter(), configs.pushPinOptions);
+
+      privateData.map.entities.push(pushpin);
+    }
+  }
+  else{
+      $('#myStoreMap').empty().html('<span class="MyStore__map--errorMsg">We\'re sorry. Maps are currently unavailable.</span>');
+  }
+  };
+
+  // creates our map
+  privateMethods.constructMap = function _constructMap() {
+    // Try to do this up to 10 times before failing out
+    return privateMethods.attemptMultipleTimes(privateMethods.attemptToConstructBingMap, 10);
+  };
+
+  // PLP special case to reload
+  privateMethods.reloadForPLP = function reloadForPLP() {
+    var plp = THD.PLP;
+    var plpLoaded = typeof plp !== 'undefined';
+    var loadInstore = plp.loadInstore;
+    var targetID = (plpLoaded && loadInstore)
+      ? 'my_store'
+      : 'all_products';
+    var redirectTarget = document.getElementById(targetID);
+
+    loadInstore = ( utilsUrl.get({url: window.location.href, lookupParm: 'browsestoreoption'}) === '1' )
+      ? true
+      : loadInstore;/* if tab has already been selected, always reload instore tab*/
+
+    redirectTarget = (redirectTarget) ? redirectTarget : window.location;
+
+    if (typeof redirectTarget !== 'undefined' && plpLoaded) {
+      if (plp.runAjax && plp.loadInstore) {
+        // @TODO remove call to THD.PLP
+        THD.PLP.Routing.updateUrl(redirectTarget.href);
+      } else {
+        root.location.assign(redirectTarget.href);
+      }
+
+      plp.loadInstore = false;
+    } else {
+      /* failed miserably. just reload the page */
+      window.location.reload();
+    }
+  };
+
+  // publish the event that a new store has been set from the header
+  privateMethods.updateStoreInfo = function _updateStoreInfo() {
+    // set old store
+    configs.oldStoreParams.address = configs.storeParams.address;
+    if(storeFinder.isSelfLocalized()) {
+      privateMethods.initialize();
+    }
+    privateMethods.renderStoreTitle();
+  };
+
+  privateMethods.logStoreFinderInteraction = function _logStoreFinderInteraction() {
+    var text = $(this).closest('a').text().toLowerCase();
+    return headerAnalytics.logEvent('header click', ['header', 'store', text].join('>'));
+  };
+
+  privateMethods.closeMenu = function _closeMenu() {
+    var element = privateMethods.getCurrentElement();
+    if (element && privateData.tooltipOpen) {
+      $(element).tooltip('close');
+      $(document).off('click', privateMethods.closeMenu);
+    }
+    privateData.tooltipOpen = false;
+  };
+
+  storeFinder.openStorefinderInTooltip = function _openStorefinderInTooltip($tooltip, complete) {
+    $('#myStoreDropdown')
+      .removeClass('u--hide')
+      .appendTo($tooltip);
+
+    complete();
+
+    $(document).trigger('openingHeaderToolTip', 'storefinder');
+  };
+
+  privateMethods.openMenu = function _openMenu(element) {
+    // pending tooltip fix for creating on open
+    privateMethods.initialize().then(function _menuInitComplete() {
+      $(element).tooltip('open');
+
+      $(document).on('click', privateMethods.closeMenu);
+
+      privateData.tooltipOpen = true;
+    });
+  };
+
+  privateMethods.setCurrentElement = function _setCurrentElement(element) {
+    privateMethods.currentElement = element;
+  };
+
+  privateMethods.getCurrentElement = function _setCurrentElement() {
+    return privateMethods.currentElement || false;
+  };
+
+  privateMethods.closeOnSearchOpen = function _closeOnSearchOpen(event, isOpen) {
+    if (isOpen) {
+      privateMethods.closeMenu();
+    }
+  };
+
+  privateMethods.setOverlayConfig = function _setOverlayConfig (element){
+	/* mobile store tool tip redirect changes */
+	  var url = '//' + privateData.hostName.nonSecure + '/l/';
+	  var currentPage = window.location.href;
+	  if(THD_GLOBAL.channel === 'mobile') {
+	      if(currentPage.indexOf('/l/search/') === -1){
+	        url = url + "?URL=" + currentPage
+	     } else {
+	        url = currentPage;
+	      }
+	  }
+	  privateData.storeFinderHref = (element.id === 'myStore') ? '#localizationModalContent' : url;
+    //privateData.storeFinderHref = (element.id === 'myStore') ? '#localizationModalContent' : '//' + privateData.hostName.nonSecure + '/l/';
+	/* mobile store tool tip redirect changes */
+    privateData.overlayTriggerClass = (element.id === 'myStore') ? 'overlayTrigger' : '';
+
+    return privateData;
+  }
+
+  privateMethods.closeOnToolTipOpen = function _closeOnToolTipOpen() {
+    privateMethods.closeMenu(privateMethods.getCurrentElement());
+  };
+
+  /*
+   * Public Methods
+   */
+  storeFinder.localizationStateUnsure = function _localizationStateUnsure() {
+    return !Localizer.status.isLocalized() || Localizer.status.isDefaultLocalized();
+  };
+
+  storeFinder.handleClickOnStorefinder = function _handleClickOnStoreFinder(event) {
+    var element = event.currentTarget;
+    privateMethods.setCurrentElement(element);
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (storeFinder.localizationStateUnsure()) {
+      $(document).trigger('launchLocOverlay');
+    }
+    else if (!privateData.tooltipOpen) {
+      privateMethods.openMenu(element);
+    } else {
+      privateMethods.closeMenu(element);
+    }
+    $(document).trigger('closeAllMenus');
+    storeFinder.localizationStateUnsure() && $(document).trigger('closeHeaderTooltips');
+  };
+
+  storeFinder.closeMenuWithDelay = function _closeMenuWithDelay() {
+    // Delay to allow touch events to clear
+    setTimeout(privateMethods.closeMenu, configs.touchDelay);
+  };
+
+  storeFinder.init = function _init() {
+    privateData.tooltipOpen = false;
+
+    Localizer.localize().then(function () {
+      $(document).ready(function () {
+        privateMethods.renderStoreTitle();
+        $(document).trigger({ type: 'newStoreSet' });
+      });
+    });
+
+    Localizer.on(Localizer.event.LOCALIZED, function () {
+      $(document).trigger({ type: 'newStoreSet' });
+    });
+
+    // listen for the things
+    $(document)
+      .on('click touchend', '#myStoreDropdown .StoreInfo__item a', privateMethods.logStoreFinderInteraction)
+      .on('click touchend', '#myStoreDropdown', function (event) {
+        event.stopPropagation();
+      })
+      .on('hideHeaderDropdowns', privateMethods.closeMenu)
+      .on('newStoreSet', privateMethods.updateStoreInfo)
+      .on('closeStoreFinder', privateMethods.closeOnToolTipOpen);
+
+    return this;
+  };
+
+  /**
+   * Map of store status messages.
+   */
+  var storeStatusMessages = {
+    Open_All_Day : '24 Hrs',
+    Open_Now: 'Until ',
+    Closed_Now_Open_Today: 'Open today at ',
+    Closed_Now_Open_Tomorrow: 'Open tomorrow at ',
+    Closed_Now_Closed_Tomorrow: 'Closed tomorrow'
+  }
+
+  var status = {
+    OPEN : 'OPEN',
+    CLOSED : 'CLOSED'
+  }
+
+  var days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+  /**
+   * StoreStatus constructor constructs the store status information with easy to use
+   * apis based on the store hours passed to the constructor.
+   * Eg: storeHours : {
+   *   'monday' : {
+   *     open: 'hh:mm',
+   *     close: 'hh:mm'
+   *    },
+   *    'tuesday' : {
+   *      open: 'hh:mm',
+   *      close: 'hh:mm'
+   *    }
+   * }
+   * Following APIs provide store status
+   * 1. isOpenAllDay: Returns true if store is open for the entire day, A 24 hours store else false.
+   * 2. isClosedToday: Returns true if the store is closed today for the entire day else false
+   * 3. isOpenNow: Returns true if the store is open right now else false.
+   * 4. isClosedNow: Returns true  if the store is closed right now else false.
+   * 5. isClosedTomorrow: Returns true if the store is closed tomorrow else false
+   * 6. isOpenTomorrow:  Returns true if the store is open tomorrow else false.
+   * 7. isVisitPastMidnight: Returns true if the user visited store after 12AM and before store open time else false
+   * 8. isVisitBeforeMidnight: Returns true if the user visited store before 12AM else false
+   * 9. isOpenToday: Returns true if store is open today else false.
+   * 10.getOpenTime: Returns store opening time.
+   * 11.getCloseTime: Returns store closing time.
+   * 12.getTomorrowOpenTime: Returns store opening time for tomorrow.
+   */
+
+  function StoreStatus(storeHours, getDateCallback) {
+
+      function getDayOfTheWeek(i_day) {
+          return days[i_day];
+      }
+
+      function isClosedAllDay(i_day) {
+          var day = getDayOfTheWeek(i_day);
+          return storeHours[day].open === '0:00' && storeHours[day].close === '0:00';
+      }
+
+      function isOpenAllDay(i_day) {
+          var day = getDayOfTheWeek(i_day);
+          return storeHours[day].open === '0:00' && storeHours[day].close === '23:59';
+      }
+
+      /**
+       * Get storeHours returns store hours as Object with open and close time
+       * in milliseconds
+       * @return {[type]} [description]
+       */
+      function getStoreHours() {
+          var now = new Date();
+          var today = getDayOfTheWeek(now.getDay());
+          // extract hh:mm from storehours
+          var storeTimings = storeHours[today].open.split(':');
+          // date has been forwarded/rewinded to store opening hours
+          var storeOpenTime = now.setHours(storeTimings[0], storeTimings[1], 0);
+          // extract hh:mm from storehours
+          var storeTimings = storeHours[today].close.split(':');
+          // date has been forwarded/rewinded to store closing hours
+          var storeCloseTime = now.setHours(storeTimings[0], storeTimings[1], 0);
+          return {
+              openTime: storeOpenTime,
+              closeTime: storeCloseTime
+          }
+      }
+
+      function getDateInstance() {
+        return getDateCallback();
+      }
+
+      return {
+          isOpenAllDay: function() {
+              var today = getDateInstance();
+              return isOpenAllDay(today.getDay());
+          },
+
+          isClosedToday: function() {
+              var today = getDateInstance();
+              return isClosedAllDay(today.getDay());
+          },
+
+          isOpenNow: function() {
+              // get current time in milliseconds
+              var now = getDateInstance();
+              // get store open and close hours in milliseconds
+              var storeHours = getStoreHours();
+              return !this.isClosedToday() && now.getTime() >= storeHours.openTime && now.getTime() <= storeHours.closeTime;
+          },
+
+          isClosedNow: function() {
+              return this.isClosedToday() || !this.isOpenNow();
+          },
+
+          isClosedTomorrow: function() {
+              var today = getDateInstance();
+              var tomorrow = (today.getDay() + 1) % days.length;
+              return isClosedAllDay(tomorrow);
+          },
+
+          isOpenTomorrow: function() {
+              return !this.isClosedTomorrow();
+          },
+
+          isVisitPastMidnight: function() {
+              return getDateInstance().getTime() < getStoreHours().openTime;
+          },
+
+          isVisitBeforeMidnight: function() {
+              return !this.isVisitPastMidnight();
+          },
+
+          isOpenToday: function() {
+              var today = getDateInstance();
+              return !this.isClosedToday();
+          },
+
+          getOpenTime: function() {
+              var day = getDayOfTheWeek(getDateInstance().getDay());
+              return storeHours[day].open;
+          },
+
+          getCloseTime: function() {
+              var day = getDayOfTheWeek(getDateInstance().getDay());
+              return storeHours[day].close;
+          },
+
+          getTomorrowOpenTime: function() {
+              var day = getDayOfTheWeek((getDateInstance().getDay() + 1) % days.length);
+              return storeHours[day].open;
+          }
+      }
+  }
+
+  /**
+   * Returns the cached current store retrieved from StoreSearch Service.
+   * @return {Stores} currentStore Store information
+   */
+  privateMethods.getCurrentStore = function _getCurrentStore() {
+    return privateData.currentStore;
+  }
+
+  privateMethods.formatTime = function _formatTime(hours, mins, am_pm) {
+    return hours + ":" + mins +" "+ am_pm;
+  }
+
+  /**
+   * Convert time from 24 hours format to 12 hours format
+   * @param  {String} hh_mm hours and minutes in hh:mm format
+   * @return {String}       Formated string in 12Hrs format
+   */
+  privateMethods.convertTo12HrFormat = function _convertTo12HrFormat(hh_mm) {
+    if (hh_mm) {
+      var hours = Number(hh_mm.split(':')[0]);
+      var mins = hh_mm.split(':')[1];
+      if (hours > 12) {
+        return privateMethods.formatTime((hours - 12), mins, 'pm');
+      } else {
+        return hours === 0 ? privateMethods.formatTime(12, mins, 'am') : privateMethods.formatTime(hours, mins, 'am');
+      }
+    }
+    return hh_mm;
+  }
+
+  /**
+   * BuildStoreStatusMessage uses StoreStatus instance to determine the store status message.
+   * Based on user's local time and store hours, appropriate message is returned.
+   * Timezone is not taken into consideration! Currently store hours is always assumed to be in
+   * the store's local timezone.
+   * @return {String} Store status message based on user access time.
+   */
+  privateMethods.buildStoreStatusMessage = function _buildStoreStatusMessage(storeInfo, getDateCallback) {
+    var storeStatus = new StoreStatus(storeInfo.storeHours, getDateCallback);
+    var statusMessage = null; // default
+    var statusValue = status.OPEN;
+    if (storeStatus.isOpenAllDay()) {
+      statusMessage = storeStatusMessages.Open_All_Day;
+    } else if (storeStatus.isOpenNow()) {
+      statusMessage = storeStatusMessages.Open_Now +
+        privateMethods.convertTo12HrFormat(storeStatus.getCloseTime());
+    } else if (storeStatus.isClosedNow() && storeStatus.isVisitPastMidnight()) {
+        statusValue = status.CLOSED;
+        if (storeStatus.isOpenToday()) {
+        statusMessage = storeStatusMessages.Closed_Now_Open_Today +
+          privateMethods.convertTo12HrFormat(storeStatus.getOpenTime());
+      } else {
+          statusMessage = storeStatus.isOpenTomorrow() ?
+          storeStatusMessages.Closed_Now_Open_Tomorrow +
+          privateMethods.convertTo12HrFormat(storeStatus.getTomorrowOpenTime()) :
+          storeStatusMessages.Closed_Now_Closed_Tomorrow;
+      }
+     } else if (storeStatus.isClosedNow() && storeStatus.isVisitBeforeMidnight()) {
+         statusValue = status.CLOSED;
+         statusMessage = storeStatus.isOpenTomorrow() ?
+         storeStatusMessages.Closed_Now_Open_Tomorrow +
+         privateMethods.convertTo12HrFormat(storeStatus.getTomorrowOpenTime()) :
+         storeStatusMessages.Closed_Now_Closed_Tomorrow;
+      }
+    return {
+    status : statusValue,
+    statusMessage : statusMessage,
+    statusColor : statusValue === 'OPEN' ? '#00873C' : '#D81118'
+    }
+  }
+
+  /**
+   * Read StoreSearchService hostname from THD_GLOBAL. Defaulted to production if not in THD_GLOBAL (will be removed)
+   * @return {String} StoreSearchService hostname
+   */
+  privateMethods.getStoreSearchHostName = function _getStoreSearchHostName() {
+    return THD_GLOBAL.storeSearchServiceHostName || 'origin-api.gcp-stage.homedepot.com';
+  }
+
+   /**
+   * Get the store information from the API.
+   * @return {Promise} A promise to get store information
+   */
+  privateMethods.getStoreInfo = function _getStoreInfo(storeId) {
+    var url = 'https://'+ privateMethods.getStoreSearchHostName()+'/StoreSearchServices/v2/storesearch?storeid='+storeId+'&type=json';
+    return $.ajax({
+        url: url,
+        dataType: 'JSONP',
+        jsonpCallback: 'callback',
+        timeout: 5000
+    });
+  }
+
+
+
+  /***** TEST methods ****/
+  var testMethods = {};
+  testMethods.buildStoreStatusMessage = privateMethods.buildStoreStatusMessage;
+
+  storeFinder.getPrivateMethods = function getPrivateMethods() {
+    return privateMethods;
+  };
+
+  storeFinder.getPrivateData = function getPrivateData() {
+    return privateData;
+  };
+
+  storeFinder.getTestMethods = function() {
+    console.warn("Testing purpose only.");
+    return testMethods;
+  }
+
+  return storeFinder;
+});

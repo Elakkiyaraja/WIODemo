@@ -1,0 +1,130 @@
+'use strict';
+(function closure(root, factory) {
+	if(typeof define === 'function' && define.amd) {
+		define(['jquery', 'global.namespace'], function load($, THD) {
+			return factory(root, $, THD);
+		});
+	} else{
+		/* eslint-disable*/
+		factory(root, jQuery, THD);
+		/*eslint-enable*/
+	}
+})(this, function factory(root, $, THD) {
+	var self = {};
+	self.ui = {};
+	self.clickbuster = {};
+
+	THD.Utils = THD.Utils || {};
+	THD.Utils.GestureHandler = THD.Utils.GestureHandler  || {};
+	THD.Utils.GestureHandler.isInitialized = false;
+	self.ui.FastButton = function FastButton(element, handler) {
+		this.element = element;
+		this.handler = handler;
+
+		element.addEventListener('touchstart', this, false);
+		element.addEventListener('click', this, false);
+	};
+
+	self.ui.FastButton.prototype.handleEvent = function handleEvent(event) {
+		switch (event.type) {
+		case 'touchstart':
+			this.onTouchStart(event);
+			break;
+		case 'touchmove':
+			this.onTouchMove(event);
+			break;
+		case 'touchend':
+			this.onClick(event);
+			break;
+		case 'click':
+			this.onClick(event);
+			break;
+		default :
+			break;
+		}
+	};
+
+	self.ui.FastButton.prototype.onTouchStart = function onTouchStart(event) {
+		event.stopPropagation();
+
+		this.element.addEventListener('touchend', this, false);
+		document.body.addEventListener('touchmove', this, false);
+
+		this.startX = event.touches[0].clientX;
+		this.startY = event.touches[0].clientY;
+	};
+
+	self.ui.FastButton.prototype.onTouchMove = function onTouchMove(event) {
+		if (Math.abs(event.touches[0].clientX - this.startX) > 10 ||
+			Math.abs(event.touches[0].clientY - this.startY) > 10) {
+			this.reset();
+		}
+	};
+
+	self.ui.FastButton.prototype.onClick = function onClick(event) {
+		event.stopPropagation();
+		this.reset();
+		this.handler(event);
+
+		if (event.type === 'touchend') {
+			self.clickbuster.preventGhostClick(this.startX, this.startY);
+		}
+	};
+
+	self.ui.FastButton.prototype.reset = function reset() {
+		this.element.removeEventListener('touchend', this, false);
+		document.body.removeEventListener('touchmove', this, false);
+	};
+
+	self.clickbuster.preventGhostClick = function preventGhostClick(x, y) {
+		self.clickbuster.coordinates.push(x, y);
+		window.setTimeout(self.clickbuster.pop, 2500);
+	};
+
+	self.clickbuster.pop = function pop() {
+		self.clickbuster.coordinates.splice(0, 2);
+	};
+
+	self.clickbuster.onClick = function onClick(event) {
+		for (var i = 0; i < self.clickbuster.coordinates.length; i += 2) {
+			var x = self.clickbuster.coordinates[i];
+			var y = self.clickbuster.coordinates[i + 1];
+			if (Math.abs(event.clientX - x) < 25 && Math.abs(event.clientY - y) < 25) {
+				event.stopPropagation();
+				event.preventDefault();
+			}
+		}
+	};
+
+
+	/**
+	 * @function - Builds tap event and intercepts mouseover events for touch devices. fast click functionality taken from https://developers.google.com/mobile/articles/fast_buttons
+	 */
+	function initTouch() {
+		var isTouch;
+		if (!THD.Utils.GestureHandler.isInitialized) {
+			isTouch = 'ontouchstart' in document.documentElement;
+			THD.Utils.GestureHandler.touch = false;
+
+			if (isTouch) {
+				document.addEventListener('click', self.clickbuster.onClick, true);
+				self.clickbuster.coordinates = [];
+
+				THD.Utils.GestureHandler.touch = true;
+			}
+		} else {
+			THD.Utils.GestureHandler.isInitialized = true;
+		}
+	}
+
+	THD.Utils.GestureHandler.init = initTouch;
+
+	// $(THD.Utils.GestureHandler.init);
+
+	return {
+		init: function init() {
+			initTouch();
+		},
+		touch: 'ontouchstart' in document.documentElement
+	};
+});

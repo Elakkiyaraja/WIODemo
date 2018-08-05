@@ -1,0 +1,243 @@
+define('sbotdWidget',['mustache', 'specialBuyServiceProxy', 'text!sbotdTemplate','es6-promise', 'sbotdAnalytics'],
+  function(Mustache, specialBuyServiceProxy, sbotdTemplate, ES6PromisePolyfill, sbotdAnalytics) {
+  var Promise = Promise || ES6PromisePolyfill.Promise; 
+  /**
+   * Checks if SBOTD widget added on page.
+   * @return {Boolean} true if sbotd widget is present on page else false.
+   */
+  var isSbotdWidgetOnPage = function() {
+    var sbotd = document.getElementById("sbotd");
+    return sbotd !== null ? true : false;
+  }
+
+  /**
+   * Renders SBOTD widget on the page
+   * @param  {string} template SBOTD template
+   * @param  {object} data     special buy product list (response from special buy service api)
+   */
+  var render = function(template, data) {
+    var html  = Mustache.render(template, data);
+    var sbotd  =  document.getElementById("sbotd");
+    sbotd.innerHTML  =  html;
+    sbotd.onclick = function() {
+      var sbotdData = data.sbotdAnalytics;
+      sbotdAnalytics.loadSbotdAnalyticsData(sbotdData);
+      location.href = "http://www.homedepot.com/SpecialBuy/SpecialBuyOfTheDay";
+    };
+  }
+
+  return {
+    /**
+     * Initialize sbotd widget.
+     */
+    init: function() {
+      if (isSbotdWidgetOnPage()) {
+        return specialBuyServiceProxy.getSpecialBuyMetadata().then(function(specialBuyMetadata) {
+          render(sbotdTemplate, specialBuyMetadata);
+          var sbotdData = specialBuyMetadata.sbotdAnalytics;
+          sbotdAnalytics.onLoadSbotdAnalyticsData(sbotdData);
+        });
+      }
+      return Promise.resolve();
+    }
+  };
+});
+define('specialBuyServiceProxy', ['es6-promise'], function(ES6PromisePolyfill) {
+  
+  var Promise = Promise || ES6PromisePolyfill.Promise;
+  var OK = 200;
+  var timeout = 1*60*1000; // 1 minute
+  var currentdomain = window.location.origin;
+  var sbotdLogoImagePath = currentdomain + '/SpecialBuy/images/Logo-SBOTD.svg';
+  var specialBuyLogoImagePath = currentdomain + '/SpecialBuy/images/Special-Buy.svg';
+  var soldOutImagePath = currentdomain + '/SpecialBuy/images/400x400-Soldout.jpg';
+
+  var sbotdCache = {
+    put : function(key, val) {
+      if(val) {
+        var currentUtcTimeInMilliSec = (new Date()).getTime();
+        localStorage.setItem(key, JSON.stringify({
+          createDateTime : currentUtcTimeInMilliSec,
+          value : val
+        }));
+      }
+    },
+
+    get: function(key) {
+      var data = localStorage.getItem(key)
+      if (data !== null) {
+        data = JSON.parse(data);
+        var now = new Date();
+        if (now.getTime() - data.createDateTime < timeout) {
+          return data.value;
+        };
+      }
+      return undefined;
+    }
+  }
+
+  /**
+   * Returns the protocol of the domain
+   * @return {string} protocol either http or https
+   */
+  var getProtocol = function() {
+    return window.location.origin.split(':')[0];
+  }
+
+  /**
+   * Special Buy Service configuration
+   * @type {Object}
+   */
+  var specialBuyServiceConfig = {
+    protocol: getProtocol() + '://',
+    host : window.THD_GLOBAL.nonSecureHostName,
+    service : '/SpecialBuy/sbotd-svcs',
+    url : function() {
+      return this.protocol + this.host + this.service;
+    }
+  }
+
+  /**
+   * Queries SpecialBuy service to retrieve special buy products
+   * Registers onload and onerror callback to handle response.
+   * @param  {function} resolve Resolve if ajax call is success
+   * @param  {function} reject  Reject if ajax call fails
+   */
+  var sbotdRemote = function(resolve, reject) {
+    var request = new XMLHttpRequest();
+    // handle success
+    request.onload = function() {
+      if (this.status === OK && this.response.length > 0) {
+        var json = JSON.parse(this.response);
+        resolve(json[0]);
+      } else {
+        reject(new Error(this.statusText));
+      }
+    };
+    // handler error
+    request.onerror = function() {
+      reject(new Error(
+        'XMLHttpRequest Error: ' + this.statusText));
+    };
+    request.open('GET', specialBuyServiceConfig.url());
+    request.send();
+  }
+
+  var constructSpecialBuyResponse = function() {
+    return {
+      title: 'All Our Big Savings in One Place',
+      imageUrl: soldOutImagePath,
+      logoUrl: specialBuyLogoImagePath,
+      dealsAvailable: false,
+      sbotdAnalytics: 'savings'
+    }
+  }
+
+  /**
+   * Map SpecialBuyService products (API Response) to SpecialBuyMetadata
+   * @param  {object} specialBuyProductsInfo special buy product Info from the service
+   * @return {object} specialBuyMetadata or empty object
+   */
+  var toSpecialBuyMetadata = function(specialBuyProductsInfo) {
+    var specialProductsInInventory = specialBuyProductsInfo
+      .specialBuyProductList.filter(function(product) {
+        return product.inventoryAvailable === true;
+    });
+    var dealCount = specialProductsInInventory.length;
+    if (dealCount > 0) {
+      var specialBuyProduct = specialProductsInInventory[0]; 
+      return {
+        title: specialBuyProductsInfo.specialBuyMetaData.tagline,
+        imageUrl: specialBuyProduct.size400ImageUrlList[0],
+        logoUrl: sbotdLogoImagePath,
+        dealsAvailable: true,
+        sbotdAnalytics: 'deal'
+      }
+    } else {
+      return constructSpecialBuyResponse();
+    }
+  }
+
+  return {
+    /**
+     * Proxy method to special buy service to retrieve
+     * special buy products
+     * @return {object} Promise to retrieve special buy products
+     */
+    getSpecialBuyProducts: function() {
+      return sbotdCache.get('sbotdProducts').catch(sbotdRemote);
+    },
+
+    /**
+     * Get specialBuyProducts from cache.
+     * If cache miss, get specialBuy products from specialBuy Service.
+     * Map specialBuyProducts to specialBuyMetadata 
+     * @return {Promise} Promise to resolve to specialBuyMetadata or nothing.
+     */
+    getSpecialBuyMetadata : function() {
+      var sbotdMetadata = sbotdCache.get('sbotdMetadata');
+      if(sbotdMetadata) {
+        return Promise.resolve(sbotdMetadata).catch(constructSpecialBuyResponse);
+      } else {
+        return new Promise(sbotdRemote)
+          .then(toSpecialBuyMetadata)
+          .then(function(specialBuyMetadata) {
+            sbotdCache.put('sbotdMetadata', specialBuyMetadata);
+            return specialBuyMetadata;
+          }).catch(constructSpecialBuyResponse)
+      }
+    },
+
+    mock : {
+      specialBuyServiceConfig : specialBuyServiceConfig
+    }
+  }
+});
+define('sbotdAnalytics',['digitalData'], function(digitalData) {
+  var digitalData = digitalData.get();
+  return {
+    /**
+      * On click load sbotd analytics data with
+      * DigitalData content and thdAnalyticsEvent Events
+    */
+
+    loadSbotdAnalyticsData : function (sbotdAnalytic) {
+      if (typeof thdAnalyticsEvent === 'undefined') {
+        window.thdAnalyticsEvent = {};
+      }
+      var widget =  {
+        id : '0001',
+        name : 'sbotd peek',
+        templates : sbotdAnalytic,
+        component : 'module',
+        campaign : 'sbotd',
+        action : 'shop link'
+      }
+      thdAnalyticsEvent.stash = {};
+      thdAnalyticsEvent.stash = { content: { widget: [] } };
+      thdAnalyticsEvent.category = {};
+      thdAnalyticsEvent.category.primaryCategory = 'stash';
+      thdAnalyticsEvent.eventInfo = { eventName: 'content module click'};
+      thdAnalyticsEvent.eventMode = 'stash';
+      if(thdAnalyticsEvent.stash.content && thdAnalyticsEvent.stash.content.widget) {
+        thdAnalyticsEvent.stash.content.widget.push(widget);
+      } else {
+        thdAnalyticsEvent.stash.content = { widget : [widget] };
+      }
+      if (typeof digitalData !== 'undefined' && digitalData.hasOwnProperty('event')) {
+        digitalData.event.push(thdAnalyticsEvent);
+      }
+    },
+    /**
+      * On load sbotd analytics data with Digital Data
+    */
+    onLoadSbotdAnalyticsData: function (sbotdAnalytic){
+      if(digitalData){
+        digitalData.content = digitalData.content || {};
+        digitalData.content.widget = digitalData.content.widget || [];
+        digitalData.content.widget.push({id: '0001', name: 'sbotd peek', templates: sbotdAnalytic});
+      }
+    }
+
+  }
+});

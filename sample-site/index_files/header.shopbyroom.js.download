@@ -1,0 +1,108 @@
+/* globals define */
+/*
+  Purpose:
+    - UI controller for the flyoutDIY on the L1 navigation list.
+
+  Dependencies
+    - Mustache
+    - jQuery
+    - Hoverintent
+    - THD Namespace
+*/
+
+(function closure(root, factory) {
+  /* istanbul ignore else  */
+  if (typeof define === 'function' && define.amd) {
+    define('header.shopbyroom', ['jquery', 'mustache', 'header.data', 'header.analytics', 'header.dropdownmodule', 'hoverIntent'],
+      function load(jQuery, Mustache, headerData, headerAnalytics, headerDDFlyout) {
+        return factory(root, jQuery, Mustache, headerData, headerAnalytics, headerDDFlyout);
+      });
+  } else {
+    // For non-AMD module, expose this to global (will also be useful for test cases)
+    /*eslint-disable*/
+    var _hfapp = THD.Utility.Namespace.createNamespace('THD.HFApp');
+    _hfapp.flyoutSR = factory(root, jQuery, Mustache, THD.HFApp.data, THD.HFApp.analytics, THD.HFApp.dropdownflyout, $.hoverIntent);
+    /*eslint-enable*/
+  }
+})(this, function factory(root, $, Mustache, headerData, headerAnalytics, headerDDFlyout) {
+  var flyoutSR = {};
+  var privateMethods = {};
+
+  privateMethods.templates = {};
+
+  privateMethods.templates.roomlist = headerDDFlyout.templates.shopbyroom;
+
+  privateMethods.getFlyoutData = function getFlyoutData(){
+    var jsonPath = '/hdus/en_US/DTCCOMNEW/fetch/ShopByRoom-C10.json';
+    var responseDataPromise = headerData.getEtchJSON(jsonPath);
+
+    responseDataPromise.then(function _responseDataPromise(roomData){
+      var htmlContent = Mustache.render(privateMethods.templates.roomlist, roomData.shopbyroomflyout);
+
+      $('.roomFlyout').html(htmlContent);
+    });
+  };
+
+  privateMethods.triggerHoverintent = function _triggerHoverIntent() {
+    $(this).trigger({
+      type: 'hoverintent',
+      target: this
+    });
+  };
+
+  // bind to all the necessary elements
+  privateMethods.initialize = function initialize() {
+      if(headerData.isDropDown()){
+      // delegate to all the things
+        $(document)
+          .on('hoverintent', '.Header3 .ShoppingLinks__link[data-id="room"]', privateMethods.getFlyoutData)
+          .hoverIntent({
+            selector: '.Header3 .ShoppingLinks__link[data-id="room"]',
+            over: privateMethods.triggerHoverintent,
+            out: $.noop
+          }); 
+        $(document)
+        .on('click touchend', '#roomFlyout .content_image a', privateMethods.logInteractionforImg)
+        .on('click touchend', '#roomFlyout .cta--inline', privateMethods.logInteractionforL2);
+
+        }
+    };
+
+
+  privateMethods.logInteractionforImg = function _logInteractionforImg() {
+        var level2 =  $(this).attr('alt');
+        return privateMethods.logEventPath('header click', [level2]);
+      };
+  privateMethods.logInteractionforL2= function _logInteractionforL2() {
+          var level2 = $(this).text().toLowerCase();
+          return privateMethods.logEventPath('header click', [level2]);
+      };
+
+  privateMethods.logEventPath = function _logEventPath(type, pathArray) {
+        // Get header at the beginning, then join them all
+      var level1 = $('.Header3 .ShoppingLinks__link[data-id="room"]').text();
+        return headerAnalytics.logEvent(type, ['header', level1].concat(pathArray).join('>'));
+    };
+
+  /*
+   * Public Methods
+   */
+
+  flyoutSR.init = function init() {
+    // Do it before ready - cause we rock
+    privateMethods.initialize();
+
+    // start loading the data now.
+    headerData.init();
+
+    //headerAnalytics.init();
+
+    return this;
+  };
+
+  flyoutSR.getPrivateMethods = function getPrivateMethods() {
+    return privateMethods;
+  };
+
+  return flyoutSR;
+});

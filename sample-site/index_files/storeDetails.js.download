@@ -1,0 +1,117 @@
+define(['storeFinderApi', 'text!localStoreDetailsTemplate', 'storeStatus', 'jquery', 'mustache'],
+
+  function(storeFinderApi, localStoreDetailsTemplate, StoreStatus, $, mustache) {
+
+    var _parseStoreData = function(data) {
+      var store = data.stores[0];
+      return store;
+    };
+
+    /**
+     * Map of store status messages.
+     */
+    var storeStatusMessages = {
+      Open_All_Day: '24 Hrs',
+      Open_Now: 'Until ',
+      Closed_Now_Open_Today: 'Open today at ',
+      Closed_Now_Open_Tomorrow: 'Open tomorrow at ',
+      Closed_Now_Closed_Tomorrow: 'Closed tomorrow'
+    };
+
+    var status = {
+      OPEN: 'OPEN',
+      CLOSED: 'CLOSED'
+    };
+
+
+    function _formatTime(hours, mins, amPm) {
+      return hours + ':' + mins + ' ' + amPm;
+    }
+
+    /**
+     * Convert time from 24 hours format to 12 hours format
+     * @param  {String} hhMm hours and minutes in hh:mm format
+     * @return {String}       Formated string in 12Hrs format
+     */
+    function _convertTo12HrFormat(hhMm) {
+      if (hhMm) {
+        var hours = Number(hhMm.split(':')[0]);
+        var mins = hhMm.split(':')[1];
+        if (hours > 12) {
+          return _formatTime((hours - 12), mins, 'pm');
+        }
+        return hours === 0 ? _formatTime(12, mins, 'am') : _formatTime(hours, mins, 'am');
+      }
+      return hhMm;
+    }
+
+    /**
+     * BuildStoreStatusMessage uses StoreStatus instance to determine the store status message.
+     * Based on user's local time and store hours, appropriate message is returned.
+     * Timezone is not taken into consideration! Currently store hours is always assumed to be in
+     * the store's local timezone.
+     * @return {String} Store status message based on user access time.
+     */
+    function _buildStoreStatusMessage(storeInfo, getDateCallback) {
+      var storeStatus = new StoreStatus(storeInfo.storeHours, getDateCallback);
+      var statusMessage = null; // default
+      var statusValue = status.OPEN;
+      if (storeStatus.isOpenAllDay()) {
+        statusMessage = storeStatusMessages.Open_All_Day;
+      } else if (storeStatus.isOpenNow()) {
+        statusMessage = storeStatusMessages.Open_Now +
+          _convertTo12HrFormat(storeStatus.getCloseTime());
+      } else if (storeStatus.isClosedNow() && storeStatus.isVisitPastMidnight()) {
+        statusValue = status.CLOSED;
+        if (storeStatus.isOpenToday()) {
+          statusMessage = storeStatusMessages.Closed_Now_Open_Today +
+            _convertTo12HrFormat(storeStatus.getOpenTime());
+        } else {
+          statusMessage = storeStatus.isOpenTomorrow() ?
+            storeStatusMessages.Closed_Now_Open_Tomorrow +
+            _convertTo12HrFormat(storeStatus.getTomorrowOpenTime()) :
+            storeStatusMessages.Closed_Now_Closed_Tomorrow;
+        }
+      } else if (storeStatus.isClosedNow() && storeStatus.isVisitBeforeMidnight()) {
+        statusValue = status.CLOSED;
+        statusMessage = storeStatus.isOpenTomorrow() ?
+          storeStatusMessages.Closed_Now_Open_Tomorrow +
+          _convertTo12HrFormat(storeStatus.getTomorrowOpenTime()) :
+          storeStatusMessages.Closed_Now_Closed_Tomorrow;
+      }
+      return {
+        status: statusValue,
+        statusMessage: statusMessage,
+        statusColor: statusValue === 'OPEN' ? 'my-store-widget__store--open' : 'my-store-widget__store--closed'
+      };
+    }
+
+    return {
+      init: function(target, store) {
+        if (typeof store !== 'object') {
+          return storeFinderApi.getStoreForStoreId(store).then(function(data) {
+            var parsedStore = _parseStoreData(data);
+            store.status = _buildStoreStatusMessage(parsedStore, function() {return new Date();});
+            var template = mustache.render(localStoreDetailsTemplate, store);
+            target.html(template);
+          });
+        }
+        store.status = _buildStoreStatusMessage(store, function() {return new Date();});
+        var template = mustache.render(localStoreDetailsTemplate, store);
+        target.addClass('my-store-widget');
+        target.html(template);
+        var promise = $.Deferred();
+        return promise.resolve();
+      },
+
+      privateMethods: function() {
+        return {
+          _parseStoreData: _parseStoreData,
+          storeStatusMessages: storeStatusMessages,
+          _formatTime: _formatTime,
+          _convertTo12HrFormat: _convertTo12HrFormat,
+          _buildStoreStatusMessage: _buildStoreStatusMessage
+        };
+      }
+    };
+  });

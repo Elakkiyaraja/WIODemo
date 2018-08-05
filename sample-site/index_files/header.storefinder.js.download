@@ -1,0 +1,200 @@
+/* globals Microsoft, define */
+/*
+  Purpose:
+    - Module for the store finder dropdown and all it's interactions
+
+  Dependencies:
+    - jQuery
+    - Mustache
+    - THD Namespace
+    - Microsoft
+    - THD Overlay
+*/
+(function closure(root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define('header.storefinder', ['jquery', 'global.namespace', 'global.modal', 'Localizer', 'header.storefinder.core', 'thd-overlay', 'localizationPopup', 'global.modal'],
+      function load(jQuery, THD, globalModal, Localizer, headerStorefinderCore, thdOverlay, localizationPopup, globalModal) {
+        return factory(root, jQuery, THD, globalModal, Localizer, headerStorefinderCore, thdOverlay, localizationPopup, globalModal);
+      });
+  } else {
+    // For non-AMD module, expose this to global (will also be useful for test cases)
+    /* eslint-disable */
+    var _hfapp = THD.Utility.Namespace.createNamespace('THD.HFApp');
+    _hfapp.storeFinder = factory(root, jQuery, THD, THD.Global.overlayConfigs, Localizer, THD.HFApp.headerStorefinderCore, THD.HFApp.thdOverlay, THD.HFApp.localizationPopup, THD.HFApp.globalModal);
+    /* eslint-enable */
+  }
+})(this, function factory(root, $, THD, globalModal, Localizer, headerStorefinderCore, thdOverlay, localizationPopup, globalModal) {
+  var storeFinder = {};
+  var privateMethods = {};
+
+  var privateData = {};
+  var STOREFINDER_OVERLAY_TITLE = 'Change Your Local Store';
+
+  /**
+   * Factory method to create an analytic event instance.
+   *
+   * @param  {String} eventName Event name.
+   * @param  {String} category  Primary category of the event.
+   * @return {AnalyticsEvent}   AnalyticsEvent with attributes eventName and category.
+   */
+  privateMethods.createAnalyticsEvent = function _createAnalyticsEvent(eventName, category) {
+    return thdAnalyticsEvent = {
+        category: {
+            primaryCategory: category
+        },
+        eventInfo: {
+            eventName: eventName
+        }
+    };
+  }
+
+  /**
+   * Initiate localization process:
+   * 1. Do not initiate localization process for blinds site.
+   * 2. Trigger analytical event for Change of store.
+   * 3. Start localization - Builds popup content with store information
+   *
+   * @return {Promise} Promise to resolve localization popup content.
+   */
+  privateMethods.startLocalization = function _startLocalization() {
+    var deferred = $.Deferred();
+    if (typeof digitalData !== 'undefined' && digitalData.hasOwnProperty('event')) {
+        var thdAnalyticsEvent = privateMethods.createAnalyticsEvent('change your local store', 'overlay');
+        digitalData.event.push(thdAnalyticsEvent);
+    }
+    localizationPopup.startLocalizationProcess().then(function($localizationPopupContent) {
+        deferred.resolve($localizationPopupContent.get(0));
+    })
+    return deferred.promise();
+  }
+
+  /**
+   * Factory method to create an overlay config instance.
+   *
+   * @param  {HTMLNode}    htmlNode Html node to populate in the overlay
+   * @param  {String}      Title for overlay header
+   * @return {ThdOverlayConfig}  THD Overlay config instance
+   */
+  privateMethods.getOverlayConfig = function _getOverlayConfig(title, htmlNode) {
+    return {
+        width: 700,
+        height: 700,
+        speed: '500ms',
+        useContent: true,
+        channel: 'desktop',
+        header: false,
+        title: title,
+        closeButton: true,
+        htmlNode: htmlNode
+    };
+  }
+
+  /**
+   * Get the localization popup content using localizationPop module
+   * and then trigger overlay.
+   */
+  privateMethods.launchOverlay = function _launchOverlay(event) {
+    event.preventDefault();
+    $('#localizationModalContent').remove()
+    privateMethods.startLocalization().then(function(localizationPopupContent) {
+      privateData.storeFinderOverlay.open();
+      $('#localizationContentHolder').html(localizationPopupContent);
+    });
+  }
+
+  // recalucates the co-ordinates for the popup and position overlay accordingly.
+  privateMethods.repositionOverlay = function _repositionOVerlay() {
+    privateData.storeFinderOverlay.writeCssProps();
+  }
+
+  /**
+   * Initialize overlay with empty content. overlay's open method would be used
+   * to populate the content
+   */
+  privateMethods.initStoreFinderOverlay = function _initStoreFinderOverlay() {
+    var localizationContentHolder = window.document.createElement('div');
+    localizationContentHolder.innerHTML = '<div id="localizationContentHolder"></div>';
+    privateData.storeFinderOverlay = new thdOverlay(privateMethods.getOverlayConfig(STOREFINDER_OVERLAY_TITLE, localizationContentHolder));
+    privateMethods.registerEventHandler('storeListAvailable', function() {
+      privateData.storeFinderOverlay.resizeOverlayToContent();
+      privateMethods.repositionOverlay();
+    });
+    privateMethods.registerEventHandler('storeListClose', function() {
+      privateData.storeFinderOverlay.close();
+    });
+    $(window).resize(function() {
+        privateMethods.repositionOverlay();
+    });
+    privateData.storeFinderOverlay.on('close', function() {
+      $('#localizationModalContent').remove();
+    });
+  }
+
+  /**
+   * Registers an event on document.
+   * @param  {String} eventNames list of event names as String eg: 'click touch'
+   * @param  {Function} handler  Handler function to be invoked upon event.
+   * @param  {String} selector   Selector on which event to be triggered.[Optional]
+   * @return {Object} $document  Jquery Document object
+   */
+  privateMethods.registerEventHandler = function _registerEventHandler(eventNames, handler, selector) {
+    var $document = $(document);
+    return $document.on(eventNames, selector, handler);
+  }
+
+  /**
+   * Update store title in the header.
+   * @param  {[type]} event event which trigger store update.
+   * @param  {[type]} html  updated store details
+   */
+  privateMethods.updateStoreTitle = function _updateStoreTitle(event, html) {
+    $('#myStore').find('.MyStore__label').html(html);
+  };
+
+  /**
+   * Attach tooltip to mystore element on the page.
+   */
+  privateMethods.attachTooltipToMyStore = function _attachTooltipToMyStore() {
+      // do a manual control over opening/closing
+      $('#myStore').tooltip({
+          type: 'manual',
+          noPad: true,
+          onOpen: headerStorefinderCore.openStorefinderInTooltip
+      });
+  }
+
+  /*
+   * Public Methods
+   */
+  storeFinder.init = function _init() {
+    globalModal.init();
+    privateMethods.initStoreFinderOverlay();
+
+    Localizer.localize().then(function () {
+      $(document).ready(function() {
+        if (Localizer.status.isSelfLocalized() || Localizer.status.isAutoLocalized()) {
+          privateMethods.attachTooltipToMyStore();
+        }
+
+        privateMethods.registerEventHandler('click touchend', headerStorefinderCore.handleClickOnStorefinder, '#myStore');
+      });
+	  });
+
+    privateMethods.registerEventHandler('click touchend', headerStorefinderCore.closeMenuWithDelay, '#myStoreDropdown .overlayTrigger');
+
+    privateMethods.registerEventHandler('click', privateMethods.launchOverlay, '.thdOverlayTrigger');
+    privateMethods.registerEventHandler('launchLocOverlay', privateMethods.launchOverlay);
+    privateMethods.registerEventHandler('updateStoreTitle', privateMethods.updateStoreTitle);
+    return this;
+  };
+
+  storeFinder.getPrivateMethods = function getPrivateMethods() {
+    return privateMethods;
+  };
+
+  storeFinder.getPrivateData = function getPrivateData() {
+    return privateData;
+  };
+
+  return storeFinder;
+});

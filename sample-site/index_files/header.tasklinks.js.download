@@ -1,0 +1,68 @@
+/* globals define */
+
+(function closure(root, factory) {
+  /* istanbul ignore else  */
+  if (typeof define === 'function' && define.amd) {
+    define('header.tasklinks', ['jquery', 'header.analytics'],
+      function load(jQuery, headerAnalytics) {
+        return factory(root, jQuery, headerAnalytics);
+      });
+  } else {
+    // For non-AMD module, expose this to global (will also be useful for test cases)
+    /*eslint-disable*/
+    var _hfapp = THD.Utility.Namespace.createNamespace('THD.HFApp');
+    _hfapp.TaskLinks = factory(root, jQuery, THD.HFApp.analytics);
+    /*eslint-enable*/
+  }
+})(this, function factory(root, $, headerAnalytics) {
+  var taskLinks = {};
+  var privateMethods = {};
+
+  var config = {
+    taskLinkSelector: '.TaskLinks__link',
+    eventName: 'header.tasklinks'
+  };
+
+  /*
+   * Private Methods
+   */
+  privateMethods.triggerHoverintent = function _triggerHoverintent() {
+    $(this).trigger({
+      type: 'hoverintent',
+      target: this
+    });
+    $(document).trigger('closeAllMenus');
+    // $(document).trigger('closeHeaderTooltips');
+  };
+
+  privateMethods.logInteraction = function _logInteraction() {
+    var $element =  $(this).closest('a');
+    var text = $element.text().toLowerCase();
+
+    return headerAnalytics.logEvent('header click', ['header', 'task links', text].join('>'));
+  };
+
+  /*
+   * Public Methods
+   */
+  taskLinks.getPrivateMethods = function getPrivateMethods() {
+    return privateMethods;
+  };
+
+  taskLinks.init = function _init(_config) {
+    var taskConfig = (_config || config);
+
+    // Patch for hoverintent listening
+    $(document)
+      .on('click touchend', taskConfig.taskLinkSelector, privateMethods.logInteraction)
+      .hoverIntent({
+        selector: taskConfig.taskLinkSelector,
+        over: privateMethods.triggerHoverintent,
+        out: $.noop
+      });
+  };
+
+  taskLinks.config = config;
+
+  return taskLinks;
+});

@@ -1,0 +1,95 @@
+
+/* Single instance ToolTip Component
+ * THD.Global.Tooltip.js
+ * Global Tooltip overlay component
+ */
+
+ 'use strict';
+ (function closure(root, factory) {
+	if(typeof define === 'function' && define.amd) {
+		define('global.toolTip', ['jquery', 'global.namespace', 'mustache'], function load($, THD, Mustache) {
+			return factory(root, $, THD, Mustache);
+		});
+	} else{
+ 		// For non-AMD module, expose this to global (will also be useful for test cases)
+ 		/* eslint-disable*/
+ 		factory(root, jQuery, THD, Mustache);
+ 		/*eslint-enable*/
+	}
+})(this, function factory(root, $, THD, Mustache) {
+	var	toolTip = THD.Global.toolTip = THD.Global.toolTip || {};
+	var config = { 'toolTipTemplate': '<div class="thd-g-tooltip">' +
+											'<div class="{{pointerPosition}}"></div>' +
+											'<div class="thd-g-tooltip-content">' +
+												'<div class="thd-g-tooltip-title">{{{header}}}</div>' +
+												'<div class="thd-g-tooltip-body">{{{body}}}</div>' +
+											'</div>' +
+											'<a class="thd-g-tooltip-close" href="javascript:;"></a>' +
+										'</div>'
+				};
+	var triggerToolTipClz = '.js-tooltip';
+	var toolTipClz = '.thd-g-tooltip';
+	var toolTipCloseClz = '.thd-g-tooltip-close';
+	var tipOpen = false;
+
+	function removeToolTip() {
+		$(toolTipClz).remove();
+	}
+
+	// Position the tooltip and display it
+	function positionToolTip(triggerElm) {
+		var tooltipElm = $(toolTipClz);
+		var trigger = triggerElm.offset();
+		var triggerWidth = triggerElm.width() / 2;
+		var triggerHeight = triggerElm.height();
+		var tooltipWidth = tooltipElm.width() / 2;
+
+		tooltipElm.attr('style', 'left:' + (-tooltipWidth + trigger.left + triggerWidth) + 'px;top:' + (trigger.top + triggerHeight) + 'px;');
+	}
+
+	function buildToolTip() {
+		var tooltipHeader = $(this).data('tooltip-header');
+		var tooltipContent = $(this).data('tooltip-content');
+		var pointerPosition = $(this).data('tooltip-pointer') || 'thd-g-arrow-up';
+		var data = {};
+		var html;
+
+		if( $(this) !== 'undefined' ) {
+			tipOpen = true;
+
+			data.header = tooltipHeader;
+			data.body = tooltipContent;
+			data.pointerPosition = pointerPosition;
+			html = Mustache.to_html(config.toolTipTemplate, data);
+			if($(toolTipClz).length === 1) {
+				removeToolTip();
+			}
+			$('body').prepend(html);
+			$(toolTipCloseClz).on('click', removeToolTip);
+			positionToolTip($(this));
+		}
+	}
+
+	function closeToolTip(e) {
+		var tgt = e.target || e.srcElement;
+		if(tipOpen) {
+			tipOpen = false;
+			if($(tgt).is(triggerToolTipClz) || $(tgt).closest(triggerToolTipClz) || $(tgt).closest(toolTipClz).length > 0) {
+				e.stopPropagation();
+				return false;
+			}
+			removeToolTip();
+		}
+	}
+
+	// public function
+	toolTip.bindEvents = function bindEvents() {
+		$(document)
+		.on('click', triggerToolTipClz, buildToolTip)
+		.on('click', closeToolTip);
+	};
+
+	toolTip.bindEvents();
+
+	return toolTip;
+});

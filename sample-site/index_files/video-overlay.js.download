@@ -1,0 +1,122 @@
+(function closure(root, factory) {
+	if(typeof define === 'function' && define.amd) {
+		define(['thd-videoPlayer', 'thd-overlay', 'thd-window'], factory);
+	} else {
+		/* eslint-disable*/
+		THD = typeof THD === 'undefined' ? {} : THD;
+		THD.Global = typeof THD.Global === 'undefined' ? {} : THD.Global;
+		THD.Global.VideoOverlay = factory(THD.Global.BCVideoPlayer, THD.Global.Overlay, window);
+		/*eslint-enable*/
+	}
+})(this, function factory(thdVideoPlayer, Overlay, window) {
+	'use strict';
+	var videoOverlay = {};
+	var privateMethods = {};
+	var overlay;
+	var videoPlayer;
+
+	// Private Methods
+
+	privateMethods.initializeOverlay = function initializeOverlay() {
+		var videoContent = window.document.createElement('div');
+    	videoContent.innerHTML = ['<div class="grid">',
+    	'<div class="col__12-12" id="videoPlaceHolder"></div>',
+    	'<div class="thd-overlay__close-wrapper"><a title="close" href="#" class="thd-overlay__close thd-overlay__close--bcvideo"><svg class="" viewBox="0 0 32 32"><path d="M27.229 8.391l-3.385-3.386-7.843 7.838-7.84-7.84-3.386 3.385 7.609 7.608-7.613 7.612 3.385 3.386 7.843-7.838 7.84 7.841 3.387-3.386-7.61-7.608z"></path></svg></a></div>',
+    	'</div>'].join("");
+    	// Standard height and width for videos
+	    return new Overlay({
+	      	//maxWidth: 640,
+	      	//maxHeight: 360,
+	      	speed: '500ms',
+	      	useContent: true,
+	      	channel: 'desktop',
+	    	header: false,
+	      	htmlNode: videoContent
+	    });
+	}
+
+	privateMethods.videoClickHandler = function videoClickHandler(event) {
+		event.preventDefault();
+		var target = event.currentTarget;
+		var videoID = target.getAttribute("data-video-id");
+		var videoTarget = target.getAttribute("data-video-target");
+		// Call to load video on page.
+		if(videoID && videoTarget) {
+			videoOverlay.renderBCVideo(videoID, videoTarget);
+		} else if(videoID) {
+			videoOverlay.playBCVideo(videoID);
+		}
+	}
+
+	privateMethods.setNewAttrs = function setNewAttrs(node) {
+		var href = node.getAttribute("href");
+		var hrefPattern = /^javascript:playVideo\s*\([0-9]+\)\s*/;
+		var videoIdPattern = /[0-9]+/;
+		var videoID;
+		var attrs;
+		// Only for valid video elements
+		if(hrefPattern.test(href)) {
+			videoID = videoIdPattern.exec(href);
+			attrs = {'href': '#',
+					'data-video-id': videoID[0] || ''};
+			Object.keys(attrs).forEach(function set(key) {
+				node.setAttribute(key, attrs[key]);
+			});
+		}
+	}
+
+	privateMethods.closeEventListener = function closeEventListener() {
+		overlay.on('close', function () {
+			if (videoPlayer) {
+				videoPlayer.destroy();
+			}
+		});
+	}
+
+	// Public Methods
+
+	// Method when BC video has to be played in overlay with Image
+	videoOverlay.playBCVideo = function playBCVideo(videoID) {
+		try {
+			overlay.open();
+			overlay.bind();
+		    // Call to render video on overlay
+		    videoOverlay.renderBCVideo(videoID, '#videoPlaceHolder');
+		} catch(error) {
+			// Catch errors
+		}
+	}
+
+	// Method when BC video has to be played inline with Image
+	videoOverlay.renderBCVideo = function renderBCVideo(videoID, videoTarget, params) {
+		videoPlayer = thdVideoPlayer.create(videoID, params);
+		videoPlayer.render(videoTarget);
+	}
+
+	// Method to initialize video overlay from external modules
+	videoOverlay.init = function init() {
+		// Call to attach overlay to page only if it's not initialized.
+		overlay = overlay || privateMethods.initializeOverlay();
+		var videoNodes = window.document.querySelectorAll("[data-video-id]");
+		Array.prototype.slice.call(videoNodes).forEach(function addListener(node) {
+			node.addEventListener("click", privateMethods.videoClickHandler);
+		});
+		// Listen for a overlay close event to destroy video.
+		privateMethods.closeEventListener();
+	}
+
+	// Method to assit unit testing
+	videoOverlay.getPrivateMethods = function getPrivateMethods() {
+		return privateMethods;
+	}
+
+	// Setting up new attributes for old videos.
+	// Acts as a backward compatiblity for new player.
+	!function() {
+	  	var videoNodes = window.document.querySelectorAll("a[href^='javascript:playVideo']");
+	  	Array.prototype.slice.call(videoNodes).forEach(privateMethods.setNewAttrs);
+	}();
+
+	return videoOverlay;
+
+});

@@ -1,0 +1,48 @@
+    define([
+      'workshopsApi',
+      'mustache',
+      'moment',
+      'text!workshopsTemplate',
+      'tz'
+    ], function(
+      workshopsApi,
+      mustache,
+      moment,
+      workshopsTemplate
+    ) {
+
+
+      var _timeZone = 'America/New_York';
+      var _dateFormat = 'dddd, MMM D, YYYY';
+      var _timeFormat = 'hh:mm A';
+
+      var _types = {
+        DIY: 'Do-It-Yourself',
+        DIH: 'Do-It-Herself',
+        KIDS: 'Kids'
+      };
+
+      var _filterWorkshops = function(workshops) {
+        var filtered = {};
+        for (var i = workshops.length - 1; i >= 0; i--) {
+          var workshop = workshops[i];
+          workshop.formattedDate = moment(workshop.startDate).tz(_timeZone).format(_dateFormat);
+          workshop.formattedStartTime = moment(workshop.startDate).tz(_timeZone).format(_timeFormat);
+          workshop.formattedEndTime = moment(workshop.endDate).tz(_timeZone).format(_timeFormat);
+          workshop.formattedType = _types[workshop.type];
+          filtered[workshop.type] = workshop;
+        }
+        return filtered;
+      };
+
+      return {
+        init: function(target, storeId) {
+          return workshopsApi.getWorkshopsForStoreId(storeId).then(function(workshops) {
+            var filtered = _filterWorkshops(workshops);
+            var template = mustache.render(workshopsTemplate, filtered);
+            target.html(template);
+          });
+        }
+      };
+
+    });

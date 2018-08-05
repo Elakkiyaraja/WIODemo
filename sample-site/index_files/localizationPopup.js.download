@@ -1,0 +1,621 @@
+
+/* ---------------------------------------------------------------------------------------
+	THD Global localization Module
+-----------------------------------------------------------------------------------------*/
+// localization popup
+
+(function closure(root, factory) {
+	if(typeof define === 'function' && define.amd) {
+		define([
+			'jquery',
+			'global.namespace',
+			'global.utility',
+			'digitalData',
+			'cookie-utils',
+			'utils.url',
+			'global.logging',
+			'Localizer'
+		], function load($, THD, globalUtility, digitalData, cookieUtils, utilsUrl, thdLogger, Localizer) {
+			return factory(root, $, THD, globalUtility, digitalData, cookieUtils, utilsUrl, thdLogger, Localizer);
+		});
+	} else {
+		// For non-AMD module, expose this to global (will also be useful for test cases)
+		/* eslint-disable*/
+		root.localizationPopup = factory(root, jQuery, THD, THD.Global.Config, digitalData, cookieUtils, THD.Utils.Url, THD.log, THD.Localizer);
+		/*eslint-enable*/
+	}
+})(this, function factory(root, $, THD, globalUtility, digitalDataWrapper, cookieUtils, utilsUrl, thdLogger, Localizer) {
+	'use strict';
+	// This is so that we can do unit testing in a Node environment, without a Browser.
+	if(!window){
+		var window = (typeof global !== 'undefined') ? global.window : (root ? root.window : null);
+	}
+	if(!window){
+		throw new Error("Window object is required");
+	}
+
+	var loc = THD.Utility.Namespace.createNamespace('THD.Widget.LocalizationModal');
+
+	loc.buildLocalizationContainer = function buildLocalizationContainer() {
+		var locContr = ['<div id="sfModalContainer" class="">',
+							'<div id="sfHeader">',
+								'<h1 class="modal_title">Change Your Local Store</h1>',
+							'</div>',
+							'<div id="sfContents" class="modal_contents">',
+								'<div id="sfYourStore" class="sfStoreLocal"></div>',
+								'<div class="clear"></div>',
+								'<div id="sf_search_bar">',
+									'<form id="frmStoreFinder">',
+										'<fieldset id="fsStoreFinder">',
+											'<label class="control-label" id="lblFindStore"></label>',
+											'<div id="divStoreFinderBox" class="sf-control-group">',
+												'<label for="txtStoreFinder" id="lblStoreFinder" class="control-label labelRemove">Enter your ZIP Code -OR- City and State</label>',
+												'<div class="sf-controls">',
+													'<input type="text" maxlength="60" tabindex="18" id="txtStoreFinder" autocomplete="off">',
+												'</div>',
+											'</div>',
+											'<div id="divStoreFinderBtn" class="sf-control-group">',
+												'<div class="sf-controls">',
+													'<button value="StoreFinder" class="btn btn-orange btn-icon" id="btnStoreFinder"><i class="icon-search"></i></button>',
+												'</div>',
+											'</div>',
+										'</fieldset>',
+									'</form>',
+								'</div>',
+								'<div id="StoreFinderResultSet">',
+									'<p class="sfSugHeader"></p>',
+									'<div id="sfStoreList"></div>',
+								'</div>',
+							'</div>',
+						'</div>',
+						'<div id="thdFeedBackLocOverlay"></div>',
+						'<div id="sfFooter"><a id="hlViewStoreFinder" class="b">View Store Finder<i class="icon-carrot-orange"></i></a>',
+						'</div>',
+						'<div style="clear:both"><br/></div>'].join('\n');
+
+		$('#localizationModalContent').html(locContr);
+	};
+
+	var formatTime = function(hours, mins, am_or_pm) {
+    return hours + ":" + mins + am_or_pm;
+  }
+	/**
+   * Convert time from 24 hours format to 12 hours format
+   * @param  {String} hh_mm hours and minutes in hh:mm format
+   * @return {String}       Formated string in 12Hrs format
+   */
+  var convertTo12HrFormat = function(hh_mm) {
+    if (hh_mm) {
+      var hours = Number(hh_mm.split(':')[0]);
+      var mins = hh_mm.split(':')[1];
+      if(hours === 12) {
+      	return formatTime(12, mins, 'pm');
+      }
+      if (hours > 12) {
+        return formatTime((hours - 12), mins, 'pm');
+      } else {
+        return hours === 0 ? formatTime(12, mins, 'am') : formatTime(hours, mins, 'am');
+      }
+    }
+    return hh_mm;
+  }
+
+	var formatStoreHours = function(storeHours) {
+		var days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+		return days.map(function(day) {
+				var open = storeHours[day].open;
+				var close = storeHours[day].close;
+				if(open === '0:00' && close === '0:00') {
+					return 'Closed';
+				}
+				return convertTo12HrFormat(open) + '-' + convertTo12HrFormat(close);
+			})
+			.reduce(function(accumulator, current, index) {
+				if (index === 0 || accumulator[accumulator.length - 1].value !== current) {
+					return accumulator.concat({
+						value: current,
+						first: index,
+						last: index
+					});
+				}
+				accumulator[accumulator.length - 1].last++;
+				return accumulator;
+			}, [])
+			.map(function(result) {
+				var first = days[result.first].substring(0, 3);
+				var last = days[result.last].substring(0, 3);
+				var dayHours = {};
+				if (result.first === result.last) {
+					dayHours.day = first[0].toUpperCase() + first.slice(1);
+					dayHours.hours = result.value;
+				} else {
+					dayHours.day = first[0].toUpperCase() + first.slice(1) + '-' + last[0].toUpperCase() + last.slice(1);
+					dayHours.hours = result.value;
+				}
+				return dayHours;
+			})
+			.reduce(function(accumulator, dayHour, index, dayHours) {
+				accumulator += '<span><strong>' + dayHour.day + ':</strong> ' + dayHour.hours + '</span>';
+				accumulator += (index < dayHours.length - 1) ? ', ' : '';
+				accumulator += ((index + 1) % 2 === 0) ? '<br />' : '';
+				return accumulator;
+			}, '');
+	}
+
+	var storeSearchServiceProxy = (function() {
+		var MAX_RESULTS = 30;
+		var host = '//' + THD_GLOBAL.storeSearchServiceHostName;
+		var service = '/StoreSearchServices/v2/storesearch';
+
+		function http(queryParams) {
+			var deferred = $.Deferred();
+			$.ajax({
+				url: host + service + '?' + queryParams,
+				dataType: 'jsonp',
+				success: function success(json) {
+					deferred.resolve(json);
+				},
+				error: function error(err) {
+					loc.printErrorMsgs();
+					THD.log('error function error: ' + err);
+					THD.log('error function searchParams: ' + searchParams);
+					deferred.reject(err);
+				}
+			});
+			return deferred.promise();
+		}
+
+		return {
+			searchStoreById: function(storeId) {
+				var queryParam = 'storeid=' + storeId;
+				return http(queryParam);
+			},
+
+			searchStoresByCooridnates: function(latitude, longitude, radius) {
+				var queryParams = 'latitude=' + latitude + '&longitude=' + longitude + '&radius=' + radius + '&pagesize=' + MAX_RESULTS;
+				return http(queryParams);
+			},
+
+			searchStoreByAddress: function(address, radius) {
+				var queryParams = 'address=' + address + '&radius='+ radius + '&pagesize=' + MAX_RESULTS;
+				return http(queryParams);
+			}
+		}
+	}());
+
+
+	loc.getHost = function() {
+		return window.location.host;
+	}
+
+	// getStores and list them to the user
+	loc.getStores = function getStores(json, userInputAddress) {
+		var parsedData = '';
+		var cookieDomain = globalUtility.getHostNameNonSecure();
+		var h = 0;
+		var storeResultsh = 0;
+		var userLocalStoreID = loc.getUserLocalStore();
+		var buttonClass;
+		var storeHoursText;
+		var storeFinderURL;
+		var buttonText;
+		var makeMyStore;
+		var storeHoursList;
+
+
+		$.each(json.stores, function ea(i, item) {
+			if((Number(item.storeId) !== Number(userLocalStoreID) && Localizer.status.isSelfLocalized()) || Localizer.status.isAutoLocalized() || Localizer.status.isDefaultLocalized()) {
+				h += 1;
+				storeResultsh = h;
+				buttonClass = 'bttn-outline--dark bttn--inline';
+				buttonText = 'Make this your store';
+				storeHoursList = formatStoreHours(item.storeHours);
+
+				makeMyStore = (item.address.country === 'US' ? '<a href="#" class="' + buttonClass + '" rel="MakeMyStore" data-storezip="' + item.address.postalCode + '" data-storeinfo="' + item.name + '+' + item.storeId + ' - ' + item.address.city + ', ' + item.address.state + '" data-storeid=' + item.storeId + '><span class="bttn__content">' + buttonText + '</span></a>' : '');
+				storeHoursText = '<div class="time">' + storeHoursList + '</span></div></div></div>';
+				parsedData += '<div class="sfStoreRow"><i class="dwarf-sfOff">' + h + '</i><span class="sfMakeThisMyStore">' + makeMyStore + '</span><div class="vcard sfStoreDetails"><div class="org"><span class="sfStoreName"><a href="//' + cookieDomain + item.url + '">' + item.name + ' #' + item.storeId + '</a></span><span class="sfDistance"> (' + parseFloat(item.distance).toFixed(2) + ' mi)</span></div><div class="adr"><span class="street-address">' + item.address.street + '</span><span class="locality">' + item.address.city + '</span>, <span class="region">' + item.address.state + ' </span><span class="postal-code">' + item.address.postalCode + ' </span><span class="b">| <a class="sfhlViewonmap" href="//' + cookieDomain + '/StoreFinder/index.jsp?storeId=' + item.storeId + '">View On Map<i class="icon-carrot-orange"></i></a></span></div><div class="tel"><span class="type b">Phone: </span><span class="value">' + item.phone + ' </span></div>' + storeHoursText;
+			}
+		});
+
+		$('#StoreFinderResultSet p')
+			.text(storeResultsh + ' stores within 50 miles of ' + $.trim(userInputAddress))
+			.removeClass('sfRowsHeader sfSugHeader')
+			.addClass('sfRowsHeader');
+
+		$('#sfStoreList')
+			.html(parsedData)
+			//.scrollTop(0);
+
+		storeFinderURL = '//' + cookieDomain + '/StoreFinder/index.jsp?storeId=' + userInputAddress;
+
+		$('#hlViewStoreFinder').attr('href', storeFinderURL);
+	};
+
+	function getCityState(address) {
+		var cityState = [];
+		if (address.city) {
+			cityState.push(address.city + ', ');
+		}
+		if (address.county) {
+			cityState.push(address.county + ', ');
+		}
+		if (address.state) {
+			cityState.push(address.state);
+		}
+		return cityState.join('');
+	}
+
+	loc.getSuggestions = function getSuggestions(json) {
+		var parsedData = '';
+		var storeFinderURL = '';
+		var cookieDomain = globalUtility.getHostNameNonSecure();
+		var  dataPostalCode = '';
+		var dataCityState = '';
+		var dataToPass = '';
+		var dataAddress;
+
+		if (json.ambiguousAddresses[0] && json.ambiguousAddresses[0].suggestedLocations &&
+			json.ambiguousAddresses[0].suggestedLocations !== 0 ) {
+			var suggestedAddresses = json.ambiguousAddresses[0].suggestedLocations;
+			parsedData += '<ul id="ulSug">';
+
+			$('#StoreFinderResultSet p')
+				.removeClass('sfRowsHeader sfSugHeader')
+				.addClass('sfSugHeader')
+				.text('Did you mean:');
+
+			$.each(suggestedAddresses, function ea(i, item) {
+				parsedData += '<li><a href="#" data-lat="' + item.point.coordinates.lat + '" data-lon="' + item.point.coordinates.lng + '" data-citystate="' + getCityState(item.address) + '"data-postalcode="' + item.address.postalCode +'">' + item.address.formattedAddress + '</a></li>';
+			});
+			parsedData += '</ul>';
+
+			$('#sfStoreList').on('click', '#ulSug a', function click(e) {
+				var $this = $(this);
+				var dymData = $this.data();
+
+				dataPostalCode = dymData.postalcode;
+				dataCityState = dymData.citystate;
+
+				dataAddress = (dataCityState === '' || dataCityState === null || dataCityState === undefined)
+					? dataPostalCode
+					: dataCityState;
+
+				// populates text field with what the user clicked and runs the printStores function
+				$('#txtStoreFinder').val(dataAddress);
+
+				dataToPass = '' + dymData.lat + ',' + dymData.lon + '';
+				var request = {
+					latitude : dymData.lat,
+					longitude : dymData.lon,
+					radius : 50,
+					maxMatches: 30
+				}
+				storeSearchServiceProxy
+					.searchStoresByCooridnates(dymData.lat, dymData.lon, 50)
+					.then(function(json) {
+					 		loc.printStoreResults(json, dataToPass);
+					});
+
+				e.preventDefault();
+			});
+		} else {
+			loc.printErrorMsgs('noStores');
+		}
+
+		$('#sfStoreList').html(parsedData);
+
+		storeFinderURL = '//' + cookieDomain + '/StoreFinder/index.jsp';
+		$('#hlViewStoreFinder').attr('href', storeFinderURL);
+	};
+
+	// getUserLocalStore get's user store if they are already localized
+	loc.getUserLocalStore = function getUserLocalStore() {
+        var locStoreAddress = Localizer.getLocalizedStore();
+        if (locStoreAddress) {
+            $('#lblStoreFinder').css('display', 'none');
+        }
+        return locStoreAddress && locStoreAddress.storeId;
+	};
+
+	// For Analytics information
+	loc.setDataCollectors = function setDataCollectors(analyticType, userLocalStoreID) {
+		var _hddata = window._hddata || {};
+		var msg = 'change your local store';
+		var sf = 'store finder';
+		// var experienceType = cookieUtils.readCookie('THD_USERTYPE');
+
+		_hddata.contentSubCategory = sf + '>' + msg;
+		_hddata.contentCategory = sf + '>' + msg;
+		_hddata.pageType = 'tool';
+		_hddata.pageName = sf + '>' + msg;
+		_hddata.siteSection = sf;
+		_hddata.overlayType = 'local store';
+
+		if (analyticType === 'notLocal') {
+			_hddata.AJAX = 'changeStore';
+		}
+
+		if (analyticType === 'localized') {
+			_hddata.localStoreNum = userLocalStoreID;
+			_hddata.AJAX = 'setStore';
+		}
+
+		if (window.hddataReady) {
+			window.hddataReady();
+		}
+
+		window.ishddataReady = true;
+	};
+
+	// getUserLocalStoreId get's user store if they are already localized (think about mkain' this provate)
+	loc.setUserLocalStore = function setUserLocalStore(storeID) {
+		var isMyCart = /^\/mycart/.test(window.location.pathname);
+		var checkOutDiv = document.getElementById('ShopCartForm') || document.getElementById('mcc_cart') || isMyCart;
+
+		storeSearchServiceProxy.searchStoreById(storeID).then(function(storeDetails) {
+			loc.printUserLocalStore(storeDetails);
+		});
+
+    var localizerRequest = { storeId: storeID, localizationMethod: 'change store overlay'};
+    Localizer.localize(localizerRequest).then(function() {
+			if (!checkOutDiv) {
+				window.location.reload();
+			} else {
+				// notify the header to update the Store Button UI
+				$(document).trigger({
+					type: 'newStoreSet'
+				});
+
+				$(document).trigger({
+					type: 'storeSetFromLocPopup',
+					storeId: storeID
+				});
+			}
+		});
+	};
+
+	loc.printErrorMsgs = function printErrorMsgs(msgType) {
+		var noStoreMessage = '<p id="sfSubHeader">There are no stores found that meet your search criteria.</p>';
+		var needMoreInfoMessage = '<p id="sfSubHeader">We\'re sorry we need more information. Please enter a ZIP Code, City AND State, street address or store number to find a store.</p>';
+		var userMessage = (msgType === 'noStores')
+			? noStoreMessage
+			: needMoreInfoMessage;
+
+		$('#StoreFinderResultSet p').text('Search Results: No stores found.');
+		$('#sfStoreList').html(userMessage);
+	};
+
+
+	loc.printStoreResults = function printStoreResults(json, userInputAddress) {
+		var jsonAddress = json.ambiguousAddresses;
+		var jsonStores = json.stores;
+		var jsonAddressLength;
+
+		if (typeof jsonAddress !== 'undefined') {
+			jsonAddressLength = jsonAddress[0].suggestedLocations.length;
+
+			if (jsonAddressLength === 1) {
+				if (typeof jsonStores === 'undefined') {
+					loc.printErrorMsgs('noStores');
+					return;
+				}
+				loc.getStores(json, userInputAddress);
+				return;
+			}
+			if (jsonAddressLength === 0) {
+				loc.printErrorMsgs();
+				return;
+			}
+			if (jsonAddressLength > 1) {
+				loc.getSuggestions(json);
+				return;
+			}
+		}
+
+		if (typeof jsonStores !== 'undefined') {
+			loc.getStores(json, $('#txtStoreFinder').val());
+			return;
+		}
+		loc.printErrorMsgs('noStores');
+		return;
+	};
+
+	loc.printUserLocalStore = function printUserLocalStore(json) {
+		var parsedData = '';
+		var userStoreAddress = '';
+		var cookieDomain = globalUtility.getHostNameNonSecure();
+		var storeHoursList = formatStoreHours(json.stores[0].storeHours);
+
+		parsedData = ['<i class="dwarf-sfOn"></i>',
+									'<p class="sfYourstoreHeader">Your Store:</p>',
+									'<div class="vcard sfStoreHeaderDetails">',
+										'<div class="org">',
+											'<span class="sfStoreName">',
+												'<a href="//' + cookieDomain + json.stores[0].url + '">' + json.stores[0].name + ' #' + json.stores[0].storeId + '</a>',
+											'</span>',
+										'</div>',
+										'<div class="adr">',
+											'<span class="street-address">' + json.stores[0].address.street + '</span>',
+											'<span class="locality">' + json.stores[0].address.city + ', </span>',
+											'<span class="region">' + json.stores[0].address.state + ' </span>',
+											'<span class="postal-code">' + json.stores[0].address.postalCode + ' </span>',
+											'<span class="b">| <a class="sfhlViewonmap" href="//' + cookieDomain + '/StoreFinder/index.jsp?storeId=' + json.stores[0].storeId + '">View On Map<i class="icon-carrot-orange"></i></a></span>',
+										'</div>',
+										'<div class="tel">',
+											'<span class="type b">Phone: </span><span class="value">' + json.stores[0].phone + '</span>',
+										'</div>',
+										'<div class="time">' + storeHoursList + '</div>',
+									'</div>'].join('\n');
+
+		userStoreAddress = json.stores[0].address.city + ', ' + json.stores[0].address.state + ' ' + json.stores[0].address.postalCode;
+
+		$('#sfYourStore').html(parsedData);
+		$('#txtStoreFinder').val(userStoreAddress);
+	};
+
+	loc.search = function search(searchText) {
+		$('#myStore').find('a').eq(0).trigger('click');
+		$('#txtStoreFinder').trigger('click').val(searchText);
+		$('#btnStoreFinder').trigger('click');
+	};
+
+	loc.userInputGetStoreInfo =	function userInputGetStoreInfo(e, maxRadius, maxResults) {
+		var thdAnalyticsEvent = {
+			category: {
+				primaryCategory: 'button submission'
+			},
+			eventInfo: {
+				eventName: 'find a store'
+			}
+		};
+		var userInputAddress = $.trim(document.getElementById('txtStoreFinder').value);
+		e.preventDefault();
+		$('#sfStoreList').show();
+		var digitalData = digitalDataWrapper.get();
+		if (typeof digitalData !== 'undefined' && digitalData.hasOwnProperty('event')) {
+			digitalData.event.push(thdAnalyticsEvent);
+		}
+		if (userInputAddress !== '') {
+			storeSearchServiceProxy
+				.searchStoreByAddress(userInputAddress, maxRadius)
+				.then(function(json) {
+					loc.printStoreResults(json, userInputAddress);
+					$(document).trigger('storeListAvailable');
+					$('#sfStoreList').scrollTop(0);
+				});
+		} else {
+			loc.printErrorMsgs();
+		}
+	};
+
+	loc.startLocalizationProcess = function startLocalizationProcess() {
+		var userLocalStoreID;
+		var userMessage;
+		var txtFieldMessage;
+		var storeFinderURL;
+		var userInputAddress;
+		var cookieDomain = globalUtility.getHostNameNonSecure();
+		var maxResults = 30;
+		var maxRadius = '50';
+		var currentLocationDiv = '<div id="useMyLocation" style="margin:13px; float:left"><span class="orText">or </span><a href="#" class="userLocLink"><i class="localizeIcon"></i>Use Current Location</a></div>';
+		var geoCookie = cookieUtils.readCookie('THD_GEOLOCALIZED');
+		var isCurrentLocation = $('#myStore').find('.useCurrentLoc').length;
+		var deferred = $.Deferred();
+
+			// this is so we can run buildLocalizationContainer which builds out the frame of the modal
+			$('<div style="display:none;"><div id="localizationModalContent" style="width: 680px; padding:5px; text-align: left">'+
+				'<div id ="locdcContainer" style="display:none;"></div></div>')
+				.appendTo('body');
+
+			loc.buildLocalizationContainer();
+
+			userLocalStoreID = loc.getUserLocalStore();
+
+        if (Localizer.status.isNotLocalized() || Localizer.status.isAutoLocalized() || Localizer.status.isDefaultLocalized()) {
+				loc.setDataCollectors('noLocal', '');
+				userMessage = '<p id="sfSubHeader">Enter a Zip Code, City and State or store number to find a store location.</p>';
+
+				txtFieldMessage = 'View Stores Near The ZIP Code:';
+				//$('#sfYourStore').html(userMessage);
+				$('#lblFindStore').text(txtFieldMessage);
+
+				// no results to display, hiding result section
+				$('#sfStoreList').hide();
+				storeFinderURL = '//' + cookieDomain + '/StoreFinder/index.jsp';
+				$('#hlViewStoreFinder').attr('href', storeFinderURL);
+				deferred.resolve($('#localizationModalContent'));
+			} else {
+				$('#sfStoreList').show();
+				// maxResults = 1;
+				loc.setDataCollectors('localized', userLocalStoreID);
+
+				storeSearchServiceProxy.searchStoreById(userLocalStoreID).then(function(storeDetails){
+					loc.printUserLocalStore(storeDetails);
+				});
+
+				storeSearchServiceProxy.searchStoreByAddress(userLocalStoreID, maxRadius).then(function(storeList) {
+					loc.getStores(storeList, userLocalStoreID);
+					deferred.resolve($('#localizationModalContent'));
+				});
+
+				txtFieldMessage = 'View Stores Near Another ZIP Code:';
+
+				if ('geolocation' in navigator && !geoCookie && isCurrentLocation > 0) {
+					$('#fsStoreFinder').append(currentLocationDiv);
+					txtFieldMessage = '';
+				}
+
+				$('#lblFindStore').text(txtFieldMessage);
+
+				storeFinderURL = '//' + cookieDomain + '/StoreFinder/index.jsp?storeId=' + userInputAddress;
+				$('#hlViewStoreFinder').attr('href', storeFinderURL);
+			}
+
+
+			$('#frmStoreFinder')
+				.on('keypress', '#txtStoreFinder', function keypress(e) {
+					if (e.which === 13) {
+						loc.userInputGetStoreInfo(e, maxRadius, maxResults);
+					}
+				})
+				.on('click', '#btnStoreFinder', function click(e) {
+					loc.userInputGetStoreInfo(e, maxRadius, maxResults);
+				})
+				.on('click', '#txtStoreFinder', function click(e) {
+					e.preventDefault();
+					$('#lblStoreFinder').css('display', 'none');
+				});
+
+				return deferred.promise();
+
+	};
+
+	loc.init = function init() {
+		// @TODO remove from here, pip stuff should be in PIP
+		$('#checkAvailabilityPIP').on('click', function click(e) {
+			e.preventDefault();
+			window.pipBopisZipCheck = true;
+		});
+		$(document).on('click', 'a[rel="MakeMyStore"]', function click(e) {
+			var $this = $(this);
+			var thdAnalyticsEvent = createAnalyticsEvent('make this my store', 'button submission')
+			e.preventDefault();
+			var digitalData = digitalDataWrapper.get();
+
+			if (typeof digitalData !== 'undefined' && digitalData.hasOwnProperty('event')) {
+				digitalData.event.push(thdAnalyticsEvent);
+			}
+			loc.setUserLocalStore($this.data('storeid'), $this.data('storeinfo'), $this.data('storezip'));
+		});
+	};
+
+	/**
+	 * Registers an event to a selector
+	 * @param  {[type]} selector     [description]
+	 * @param  {[type]} eventName    [description]
+	 * @param  {[type]} eventHandler [description]
+	 */
+	var registerEvent = function(selector, eventName, eventHandler) {
+		$(document).on(eventName, selector, eventHandler);
+	}
+
+	/**
+	 * Factory function which create Analytics event object.
+	 *
+	 * @param  {[type]} eventName [description]
+	 * @param  {[type]} category  [description]
+	 * @return {[type]}           [description]
+	 */
+	var createAnalyticsEvent = function(eventName, category) {
+	    return {
+	        category: {
+	            primaryCategory: category
+	        },
+	        eventInfo: {
+	            eventName: eventName
+	        }
+	    };
+	}
+
+	return loc;
+});

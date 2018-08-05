@@ -1,0 +1,150 @@
+/* globals Microsoft, define */
+/*
+  Purpose:
+    - Module for the store finder dropdown and all it's interactions
+
+  Dependencies:
+    - jQuery
+    - Mustache
+    - THD Namespace
+    - Microsoft
+    - jQuery fancybox
+*/
+define([], function() {
+
+  var days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+  /**
+   * StoreStatus constructor constructs the store status information with easy to use
+   * apis based on the store hours passed to the constructor.
+   * Eg: storeHours : {
+   *   'monday' : {
+   *     open: 'hh:mm',
+   *     close: 'hh:mm'
+   *    },
+   *    'tuesday' : {
+   *      open: 'hh:mm',
+   *      close: 'hh:mm'
+   *    }
+   * }
+   * Following APIs provide store status
+   * 1. isOpenAllDay: Returns true if store is open for the entire day, A 24 hours store else false.
+   * 2. isClosedToday: Returns true if the store is closed today for the entire day else false
+   * 3. isOpenNow: Returns true if the store is open right now else false.
+   * 4. isClosedNow: Returns true  if the store is closed right now else false.
+   * 5. isClosedTomorrow: Returns true if the store is closed tomorrow else false
+   * 6. isOpenTomorrow:  Returns true if the store is open tomorrow else false.
+   * 7. isVisitPastMidnight: Returns true if the user visited store after 12AM and before store open time else false
+   * 8. isVisitBeforeMidnight: Returns true if the user visited store before 12AM else false
+   * 9. isOpenToday: Returns true if store is open today else false.
+   * 10.getOpenTime: Returns store opening time.
+   * 11.getCloseTime: Returns store closing time.
+   * 12.getTomorrowOpenTime: Returns store opening time for tomorrow.
+   */
+
+  var StoreStatus = function _StoreStatus(storeHours, getDateCallback) {
+
+    function getDayOfTheWeek(iDay) {
+      return days[iDay];
+    }
+
+    function isClosedAllDay(iDay) {
+      var day = getDayOfTheWeek(iDay);
+      return storeHours[day].open === '0:00' && storeHours[day].close === '0:00';
+    }
+
+    function isOpenAllDay(iDay) {
+      var day = getDayOfTheWeek(iDay);
+      return storeHours[day].open === '0:00' && storeHours[day].close === '23:59';
+    }
+
+    /**
+     * Get storeHours returns store hours as Object with open and close time
+     * in milliseconds
+     * @return {[type]} [description]
+     */
+    function getStoreHours() {
+      var now = new Date();
+      var today = getDayOfTheWeek(now.getDay());
+      // extract hh:mm from storehours
+      var storeTimings = storeHours[today].open.split(':');
+      // date has been forwarded/rewinded to store opening hours
+      var storeOpenTime = now.setHours(storeTimings[0], storeTimings[1], 0);
+      // extract hh:mm from storehours
+      storeTimings = storeHours[today].close.split(':');
+      // date has been forwarded/rewinded to store closing hours
+      var storeCloseTime = now.setHours(storeTimings[0], storeTimings[1], 0);
+      return {
+        openTime: storeOpenTime,
+        closeTime: storeCloseTime
+      };
+    }
+
+    function getDateInstance() {
+      return getDateCallback();
+    }
+
+    return {
+      isOpenAllDay: function() {
+        var today = getDateInstance();
+        return isOpenAllDay(today.getDay());
+      },
+
+      isClosedToday: function() {
+        var today = getDateInstance();
+        return isClosedAllDay(today.getDay());
+      },
+
+      isOpenNow: function() {
+        // get current time in milliseconds
+        var now = getDateInstance();
+        // get store open and close hours in milliseconds
+        var storeHrs = getStoreHours();
+        return !this.isClosedToday() && now.getTime() >= storeHrs.openTime && now.getTime() <= storeHrs.closeTime;
+      },
+
+      isClosedNow: function() {
+        return this.isClosedToday() || !this.isOpenNow();
+      },
+
+      isClosedTomorrow: function() {
+        var today = getDateInstance();
+        var tomorrow = (today.getDay() + 1) % days.length;
+        return isClosedAllDay(tomorrow);
+      },
+
+      isOpenTomorrow: function() {
+        return !this.isClosedTomorrow();
+      },
+
+      isVisitPastMidnight: function() {
+        return getDateInstance().getTime() < getStoreHours().openTime;
+      },
+
+      isVisitBeforeMidnight: function() {
+        return !this.isVisitPastMidnight();
+      },
+
+      isOpenToday: function() {
+        // var today = getDateInstance();
+        return !this.isClosedToday();
+      },
+
+      getOpenTime: function() {
+        var day = getDayOfTheWeek(getDateInstance().getDay());
+        return storeHours[day].open;
+      },
+
+      getCloseTime: function() {
+        var day = getDayOfTheWeek(getDateInstance().getDay());
+        return storeHours[day].close;
+      },
+
+      getTomorrowOpenTime: function() {
+        var day = getDayOfTheWeek((getDateInstance().getDay() + 1) % days.length);
+        return storeHours[day].open;
+      }
+    };
+  };
+  return StoreStatus;
+});

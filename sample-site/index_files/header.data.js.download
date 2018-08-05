@@ -1,0 +1,343 @@
+/* globals define */
+/*
+  Purpose: Handles data requests to load flyout
+*/
+
+(function closure(root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define('header.data', ['jquery', 'window', 'global.utility', 'cookie-utils'],
+      function load(jQuery, window, globalUtility, cookieUtils) {
+        return factory(root, jQuery, window, globalUtility, cookieUtils);
+      });
+  } else {
+    // For non-AMD module, expose this to global (will also be useful for test cases)
+    /*eslint-disable*/
+    var _hfapp = THD.Utility.Namespace.createNamespace('THD.HFApp');
+    _hfapp.data = factory(root, jQuery, window, THD.Utility.Config, cookieUtils);
+    /*eslint-enable*/
+  }
+})(this, function factory(root, $, window, globalUtility, cookieUtils) {
+  /*
+   * Private data
+   */
+  var module = {};
+  var privateMethods = {};
+  var privateData = {
+    version: 6
+  };
+
+  /*
+   * Private Methods
+   */
+
+  // sets the protocol
+  privateMethods.determineHostName = function determineHostName() {
+    return (window.location.hostname === globalUtility.getHostNameSecure()) ? globalUtility.getHostNameSecure() : globalUtility.getHostNameNonSecure();
+  };
+
+  // determines if we are in the staging LLC
+  privateMethods.getStagingFlag = function getStagingFlag() {
+    return globalUtility.instance === 's' ? '&instance=s' : '';
+  };
+
+  privateMethods.getFlyoutDataUrl = function _getFlyoutDataUrl() {
+    var hostName = privateMethods.determineHostName();
+    var stagingFlag = privateMethods.getStagingFlag();
+    var versionFlag = (privateData.version ? '&version=' + privateData.version : '');
+    return '//' + hostName + '/hf/rs/staticFly/headerFooterFlyout?env=&pro=false&secureClient=false' + stagingFlag + versionFlag;
+  };
+
+  privateMethods.createLevel3Key = function _createLevel3Key(level1Name, level2Name) {
+    return [level1Name, level2Name].join(':');
+  };
+
+  privateMethods.cacheLevel3Data = function _cacheLevel3Data(level1Name, level2Name, level3Data) {
+    var cacheKey = privateMethods.createLevel3Key(level1Name, level2Name);
+
+    privateData.level3[cacheKey] = level3Data;
+  };
+
+  // Most of this work could be a map, but support isn't there yet
+  privateMethods.cacheLevel2Data = function _cacheLevel2Data(categoryName, completeData) {
+    var currentCategory;
+
+    privateData.level2[categoryName] = [];
+
+    for (var x = 0; x < completeData.length; x++) {
+      currentCategory = completeData[x];
+
+      // Push the token into the current array
+      privateData.level2[categoryName].push({
+        name: currentCategory.name,
+        url: currentCategory.url
+      });
+
+      // Cache the next level
+      privateMethods.cacheLevel3Data(categoryName, currentCategory.name, currentCategory.l3);
+    }
+  };
+
+  privateMethods.clearCachedData = function _clearCachedData() {
+    privateData.level2 = {};
+    privateData.level3 = {};
+  };
+
+  privateMethods.cacheData = function _cacheData(data) {
+    // Clear cache
+    privateMethods.clearCachedData();
+
+    // Loop over the data
+    $.each(data, privateMethods.cacheLevel2Data);
+
+    return privateData;
+  };
+
+  privateMethods.requestData = function _requestData(ajaxUrl) {
+    return $.ajax({
+      dataType: 'jsonp',
+      url: ajaxUrl,
+      jsonpCallback: 'staticFlyCallback',
+      cache: true,
+      timeout: 3000
+    });
+  };
+
+  // Async fetch of the L2-L3 JSON from the header app
+  privateMethods.loadFlyoutData = function loadFlyoutData() {
+    var loadDataDefer = $.Deferred();
+    var dataUrl = privateMethods.getFlyoutDataUrl();
+    var ajaxRequest = privateMethods.requestData(dataUrl);
+
+    ajaxRequest
+      .then(privateMethods.cacheData)
+      .then(loadDataDefer.resolve);
+
+    ajaxRequest.fail(function _ajaxRequestFailure() {
+      loadDataDefer.reject('Failed to load flyout data.');
+    });
+
+    return loadDataDefer.promise();
+  };
+
+  privateMethods.initialize = function initialize() {
+    if (!privateData.dataLoaded) {
+        // initialize cache
+      privateMethods.clearCachedData();
+
+      // load the data
+      privateData.dataLoaded = privateMethods.loadFlyoutData();
+    }
+
+    return privateData.dataLoaded;
+  };
+
+  privateMethods.getBreakpointFromWidth = function _getBreakpointFromWidth(currentWidth) {
+    var result = 'default';
+
+    if (currentWidth >= 1440) {
+      result = 'lg';
+    } else if (currentWidth >= 1280) {
+      result = 'md';
+    } else if (currentWidth >= 1024) {
+      result = 'sm';
+    } else if (currentWidth >= 640) {
+      result = 'xs';
+    }
+
+    return result;
+  };
+
+  privateMethods.checkForBreakpointChange = function _checkForBreakpointChange() {
+    var windowWidth = $(window).width();
+    var currentBreakpoint = privateMethods.getBreakpointFromWidth(windowWidth);
+
+    if (privateData.breakpoint !== currentBreakpoint) {
+      $(document).trigger('breakpointChanged', [{
+        old: privateData.breakpoint,
+        new: currentBreakpoint
+      }]);
+    }
+
+    privateData.breakpoint = currentBreakpoint;
+  };
+
+  privateMethods.getEtchJSON = function _getEtchJSON(jsonPath){
+    var loadDataDefer = $.Deferred();
+    var hostName = privateMethods.determineHostName();
+    // var hostName = 'http://hd-qa74.homedepotdev.com';
+    var ajaxUrl = '//' + hostName + jsonPath;
+
+    $.ajax({
+      dataType: 'json',
+      url: ajaxUrl,
+      cache: true,
+      timeout: 3000,
+      success: function(data){
+        loadDataDefer.resolve(data);
+      },
+      fail: function(){
+        loadDataDefer.reject('Failed to load flyout data.');
+      }
+    });
+
+    return loadDataDefer.promise();
+  };
+
+  /*
+   * Public Methods
+   */
+  module.init = function init() {
+    /* Events
+    ------------------------------------------------ */
+    module.loaded = privateMethods.initialize();
+
+    $(window).resize(privateMethods.checkForBreakpointChange);
+
+    return module.loaded;
+  };
+
+  module.isSurfacePro = function isSurfacePro() {
+      if(!(navigator.userAgent).match(/Edge/g)){
+          return (navigator.userAgent.match(/Edge/g) !== null) ? true : false;
+      }
+      else{
+     return false;
+      }
+  };
+
+  module.getMenuConfig = function getMenuConfig(){
+    //config the different flyouts here
+    var menuConfig = {
+          'departmentsFlyout': {
+            'name': 'departmentsFlyout',
+            'menuClass': 'MainFlyout',
+            'isActive': false
+          },
+          'room':{
+            'name': 'room',
+            'menuClass': 'roomFlyout',
+            'isActive': false
+          },
+          'diyProjectsIdeas': {
+            'name': 'diyProjectsIdeas',
+            'menuClass': 'diyFlyout',
+            'isActive': false
+          },
+          'homeServices': {
+            'name': 'homeServices',
+            'menuClass': 'hsFlyout',
+            'isActive': false
+          }
+    };
+
+    return menuConfig;
+  };
+
+  module.isDropDown = function isDropDown(){
+    var hostName = window.location.hostname;
+    var host = privateMethods.determineHostName();
+    var localHost = 'localhost.homedepot.com'; // I'm checking against localhost since we can use cors plugin for dev
+    var result = hostName === localHost || hostName === host;
+    return result;
+  }
+
+  module.getEtchJSON = function getEtchJSON(url){
+    var loadDataDefer = $.Deferred();
+    var getEtchDataPromise = privateMethods.getEtchJSON(url);
+
+    getEtchDataPromise .then(function(data){
+      loadDataDefer.resolve(data)
+    });
+
+    return loadDataDefer.promise();
+  }
+
+  module.getHostName = function getHostName(){
+    return privateMethods.determineHostName();
+  };
+
+  module.isNotThirdParty = module.isDropDown;
+
+  module.showMiniCart =  function _showMiniCart(){
+    var checkCartCookie = cookieUtils.hasBrowserCookie('ShowMiniCart') && $.parseJSON(cookieUtils.readBrowserCookie('ShowMiniCart'));
+    var isCartPage = $('.cart-main-container').length > 0;
+    return module.isNotThirdParty() && !module.isTouchDevice() && !module.isSecureDomain() && !isCartPage && checkCartCookie;
+  }
+  module.getPrivateMethods = function getPrivateMethods() {
+    console.warn('getPrivateMethods should only be used for testing purposes');
+    return privateMethods;
+  };
+
+  module.getPrivateData = function getPrivateData() {
+    console.warn('getPrivateData should only be used for testing purposes');
+    return privateData;
+  };
+
+  // if you are a touch device
+  module.isTouchDevice = function isTouchDevice() {
+    var result = !( !( 'ontouchstart' in window ) && !window.navigator.msMaxTouchPoints && !window.navigator.userAgent.toLowerCase().match( /windows phone os 7/i ) );
+    return result;
+  };
+
+  module.getLevel3Key = function _getLevel3Key() {
+    var args = Array.prototype.slice.call(arguments);
+    return privateMethods.createLevel3Key.apply(null, args);
+  };
+
+  module.getLevel2Data = function _getLevel2Data(level1Name) {
+    var dataDefer = $.Deferred();
+
+    // If Load started
+    if (privateData.dataLoaded) {
+      // Wait for load to complete
+      privateData.dataLoaded.then(function _level2DataLoaded() {
+        // check for the value
+        if (privateData.level2[level1Name] && privateData.level2[level1Name].length) {
+          // return it
+          dataDefer.resolve(privateData.level2[level1Name]);
+        // This looks like a failure to load data
+        } else {
+          dataDefer.reject('Could not find level 2 value for "' + level1Name + '"');
+        }
+      });
+
+    // Not loaded yet
+    } else {
+      dataDefer.reject('Data is not loaded');
+    }
+
+    return dataDefer.promise();
+  };
+
+  module.isSecureDomain = function isSecureDomain() {
+    return window.location.hostname === globalUtility.getHostNameSecure();
+  };
+
+  module.getLevel3Data = function _getLevel3Data(level1Name, level2Name) {
+    var dataDefer = $.Deferred();
+    var cacheKey = privateMethods.createLevel3Key(level1Name, level2Name);
+
+    // If Load started
+    if (privateData.dataLoaded) {
+      // Wait for load to complete
+      privateData.dataLoaded.then(function _level3DataLoaded() {
+        // check for the value
+        if (privateData.level3[cacheKey] && privateData.level3[cacheKey].length) {
+          // return it
+          dataDefer.resolve(privateData.level3[cacheKey]);
+        // This looks like a failure to load data
+        } else {
+          dataDefer.reject('Could not find level 3 value for "' + level1Name + '" and "' + level2Name + '"');
+        }
+      });
+
+    // Not loaded yet
+    } else {
+      dataDefer.reject('Data is not loaded');
+    }
+
+    return dataDefer.promise();
+  };
+
+  return module;
+});

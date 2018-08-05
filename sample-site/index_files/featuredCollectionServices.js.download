@@ -1,0 +1,238 @@
+/**
+ * Featured Collection Module - Feautured Collection Service
+ *
+ * Not available in global namespace. Has to be consumed through featuredCollectionServices
+ *
+ * @author(s) axm8869, txp8437
+ */
+'use strict';
+(function closure(root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define('featuredCollectionServices', [
+      'jquery',
+      'mustache',
+      'global.namespace',
+      'global.logging'
+    ], function load($, Mustache, THD, thdLogger) {
+      return factory($, Mustache, THD, thdLogger);
+    });
+  } else {
+    /* eslint-disable*/
+    factory($, Mustache, THD, THD.log);
+    /*eslint-enable*/
+  }
+})(this, function factory($, Mustache, THD, thdLogger) {
+  // Featured Collection Service configuration
+  var fcClient = {};
+  fcClient.currentdomain = window.location.origin;
+  fcClient.service = '/ContentService/v2/fetchContent?templatePath=/DTCCOMNEW/fetch/collections/json/';
+
+  var galleryImglocation = '/hdus/en_US/DTCCOMNEW/fetch/collections/staticImages/';
+  var collectionUrl = '/c/customize-your-collection/decor/';
+  var podsCollectionService = '/SearchNav/v2/pages/search?itemid=';
+  var podsMedia = '&show=skus';
+  var podsType = '&type=json';
+  var jsonExtension = '.json';
+  var key = '&key=iEHQUfb9rLmF2Pp4km05gEsOA0SAN6AY';
+  // Sandbox key
+  // var key = '&key=he9b5A6DAlE59uOUK2vJDq1eiFBMEAA1'
+
+  var privateMethods = {};
+
+  /*
+   * Constructs the Featured Collection Service API.
+   * @return String Collection url
+   */
+  privateMethods.getCollectionURL = function _getCollectionURL(collectionName) {
+    var url = fcClient.currentdomain + fcClient.service + collectionName + jsonExtension;
+    return url;
+  };
+  privateMethods.getProductURL = function _getProductURL(listOfProductId) {
+    var url = fcClient.currentdomain + podsCollectionService + listOfProductId + podsMedia + podsType + key;
+    return url;
+  };
+
+  /**
+   * Template for Featured Collection
+   * @type {Array}
+   */
+  var template = ['{{#.}}',
+    '<div class="FeaturedCollection__wrapper">',
+      '<div class="col__12-12 col__6-12--sm">',
+        '<div class="content">',
+          '<a href="{{{galleryURL}}}">',
+            '<div class="FeaturedCollection__galleryImage" style="background: url({{{collectionGalleryImages}}}) center center; background-size: cover;"></div>',
+          '</a>',
+         '</div>',
+      '</div>',
+      '<div class="col__12-12 col__6-12--sm">',
+        '<div class="content">',
+          '<div class="FeaturedCollection__content">',
+            '<div class="FeaturedCollection__header">',
+              '<h1 class="FeaturedCollection__title">Featured Room</h1>',
+              '<h2 class="FeaturedCollection__subtitle"><a href="{{{galleryURL}}}">{{{title}}}</a></h2>',
+            '</div>',
+            '<div class="FeaturedCollection__description">',
+              '{{{description}}}',
+            '</div>',
+            '<div class="FeaturedCollection__pods">',
+              '{{#productImgs}}',
+              '<div class="col__3-12">',
+                '<div class="content">',
+                  '<div class="FeaturedCollection__pod">',
+                    '<a href="{{{webUrl}}}"><img src="{{{locationList}}}" class="stretchy" /></a>',
+                  '</div>',
+                '</div>',
+              '</div>',
+              '{{/productImgs}}',
+              '{{#count}}',
+              '<div class="col__3-12">',
+                '<div class="content">',
+                  '<div class="FeaturedCollection__pod">',
+                    '<a href="{{{galleryURL}}}">',
+                      '<img src="{{{locationList}}}" class="stretchy" />',
+                      '<div class="FeaturedCollection__remainingCountOverlay"></div>',
+                      '<span class="FeaturedCollection__remainingCount">+{{remainingCount}}</span>',
+                    '</a>',
+                  '</div>',
+                '</div>',
+              '</div>',
+              '{{/count}}',
+            '</div>',
+          '</div>',
+        '</div>',
+      '</div>',
+    '</div>',
+    '{{/.}}'
+  ].join('');
+
+  privateMethods.getCollection = function _getCollection(getCollectionJSON) {
+    return $.ajax({
+      url: privateMethods.getCollectionURL(getCollectionJSON),
+      dataType: 'jsonp',
+      callback: 'fcCallback',
+      contentType: 'application/json',
+      type: 'GET',
+      crossDomain: true
+    });
+  };
+
+  privateMethods.getProduct = function _getProduct(getProductJSON) {
+    return $.ajax({
+      url: privateMethods.getProductURL(getProductJSON),
+      dataType: 'jsonp',
+      contentType: 'application/json',
+      type: 'GET',
+      crossDomain: true
+    });
+  };
+
+  privateMethods.collectionGalleryImg = function _collectionGalleryImg(data) {
+    var collectionGalleryImage = data.datas.collectionDatas.collectionGalleryImages;
+    if (collectionGalleryImage.length !== 0) {
+      return fcClient.currentdomain + galleryImglocation + collectionGalleryImage[0].galleryImg;
+    }
+  };
+
+  privateMethods.buildTemplate = function _buildTemplate(data) {
+    var title = data.datas.collectionDatas.title;
+    var collectionOnPage = title.toLowerCase().replace(/ /g, '-');
+    var collectionGalleryURL = fcClient.currentdomain + collectionUrl + collectionOnPage;
+    var description = data.datas.collectionDatas.description;
+    var podsData = data.skuDetailsLst.slice(0, 7);
+    var lastPodWithCount = data.skuDetailsLst.slice(7);
+    var remainingCount = data.datas.ProductidLists.length - 8;
+
+    var finalHtml = Mustache.render(template, {
+      title: title,
+      description: description,
+      collectionGalleryImages: privateMethods.collectionGalleryImg(data),
+      productImgs: podsData,
+      galleryURL: collectionGalleryURL,
+      count: lastPodWithCount,
+      remainingCount: remainingCount
+
+    });
+
+    $('.FeaturedCollection[data-collection = "' + collectionOnPage + '"]').html(finalHtml);
+    privateMethods.fcMobile = function () {
+      var mobilePodsCount = remainingCount + 4;
+      var mobilePods = [
+        '<a href="'+collectionGalleryURL+'" class="FeaturedCollection__mobile">',
+        '<div class="FeaturedCollection__remainingCountOverlay"></div>',
+        '<span class="FeaturedCollection__remainingCount">',
+        '+' + mobilePodsCount + '',
+        '</span>',
+        '</a>'
+      ].join('');
+      $('.FeaturedCollection__pods .col__3-12:nth-child(4) a:first-child').append(mobilePods);
+    };
+    privateMethods.fcMobile();
+  };
+
+  /*
+   * Log failure, if pulling featured collection fail
+   * @param  error Http error
+   *
+   */
+  privateMethods.handleFailure = function _handleFailure(error) {
+    thdLogger.log('Failed to retrieve Featured Collection', error);
+  };
+
+  privateMethods.pluck = function _pluck(field) {
+    return function (object) {
+      return object[field];
+    };
+  };
+
+  privateMethods.podIdsSection = function _podIdsSection(ids, section) {
+    var sectionProductIds = section.products.map(privateMethods.pluck('id'));
+    return ids.concat(sectionProductIds);
+  };
+
+  privateMethods.collectionData = function _collectionData(collectionData) {
+    var listOfProductIds = collectionData.section.reduce(privateMethods.podIdsSection, []);
+    return {
+      ProductidLists: listOfProductIds,
+      collectionDatas: collectionData
+    };
+  };
+
+  privateMethods.collectionPodsData = function _collectionPodsData(product) {
+    return {
+      webUrl: product.productUrl,
+      locationList: product.info.imageUrl.replace('<SIZE>', '300')
+    };
+  };
+
+  privateMethods.collectionGalleryData = function _collectionGalleryData(data) {
+    var productIds = data.ProductidLists.slice(0, 8);
+    privateMethods.getProduct(productIds)
+      .then(function (listOfProducts) {
+        var skuDetailsLst = listOfProducts.skus.map(privateMethods.collectionPodsData);
+        return {
+          skuDetailsLst: skuDetailsLst,
+          datas: data
+        };
+      }).then(privateMethods.buildTemplate, privateMethods.handleFailure);
+  };
+
+  fcClient.getPrivateMethods = function () {
+    thdLogger.log('The getPrivateMethods() method is only for testing!!!');
+    return privateMethods;
+  };
+
+  fcClient.init = function _init() {
+    var collection = document.querySelectorAll('.FeaturedCollection');
+    for (var i = 0; i < collection.length; i++) {
+      var collectionName = collection[i].getAttribute('data-collection');
+      if (collectionName) {
+        privateMethods.getCollection(collectionName)
+        .then(privateMethods.collectionData)
+        .then(privateMethods.collectionGalleryData);
+      }
+    }
+  };
+
+  return fcClient;
+});

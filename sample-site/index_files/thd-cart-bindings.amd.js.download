@@ -1,0 +1,791 @@
+define(["thd-overlay","cookie-utils","account.list","jquery"], function(__WEBPACK_EXTERNAL_MODULE_1__, __WEBPACK_EXTERNAL_MODULE_2__, __WEBPACK_EXTERNAL_MODULE_3__, __WEBPACK_EXTERNAL_MODULE_4__) { return /******/ (function(modules) { // webpackBootstrap
+/******/ 	// The module cache
+/******/ 	var installedModules = {};
+/******/
+/******/ 	// The require function
+/******/ 	function __webpack_require__(moduleId) {
+/******/
+/******/ 		// Check if module is in cache
+/******/ 		if(installedModules[moduleId])
+/******/ 			return installedModules[moduleId].exports;
+/******/
+/******/ 		// Create a new module (and put it into the cache)
+/******/ 		var module = installedModules[moduleId] = {
+/******/ 			exports: {},
+/******/ 			id: moduleId,
+/******/ 			loaded: false
+/******/ 		};
+/******/
+/******/ 		// Execute the module function
+/******/ 		modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+/******/
+/******/ 		// Flag the module as loaded
+/******/ 		module.loaded = true;
+/******/
+/******/ 		// Return the exports of the module
+/******/ 		return module.exports;
+/******/ 	}
+/******/
+/******/
+/******/ 	// expose the modules object (__webpack_modules__)
+/******/ 	__webpack_require__.m = modules;
+/******/
+/******/ 	// expose the module cache
+/******/ 	__webpack_require__.c = installedModules;
+/******/
+/******/ 	// __webpack_public_path__
+/******/ 	__webpack_require__.p = "";
+/******/
+/******/ 	// Load entry module and return exports
+/******/ 	return __webpack_require__(0);
+/******/ })
+/************************************************************************/
+/******/ ([
+/* 0 */
+/***/ (function(module, exports, __webpack_require__) {
+
+	var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_ARRAY__, __WEBPACK_AMD_DEFINE_RESULT__;'use strict';
+	
+	var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; };
+	
+	/* globals define digitalData, THD_VERSION */
+	(function closure(root, factory) {
+	  if (true) {
+	    !(__WEBPACK_AMD_DEFINE_ARRAY__ = [__webpack_require__(1), __webpack_require__(2), __webpack_require__(3), __webpack_require__(4)], __WEBPACK_AMD_DEFINE_FACTORY__ = (factory), __WEBPACK_AMD_DEFINE_RESULT__ = (typeof __WEBPACK_AMD_DEFINE_FACTORY__ === 'function' ? (__WEBPACK_AMD_DEFINE_FACTORY__.apply(exports, __WEBPACK_AMD_DEFINE_ARRAY__)) : __WEBPACK_AMD_DEFINE_FACTORY__), __WEBPACK_AMD_DEFINE_RESULT__ !== undefined && (module.exports = __WEBPACK_AMD_DEFINE_RESULT__));
+	  } else {
+	    root.cookieUtils = factory(THD.Global.Overlay, cookieUtils, myList, $); // eslint-disable-line
+	  }
+	})(undefined, function factory(Overlay, cookieUtils, myList, $) {
+	
+	  var CHANNEL = void 0;
+	  var ATC_OVERLAY = void 0;
+	  var SELECT_A_STORE_OVERLAY = void 0;
+	  var CHECK_AVAILABILITY_OVERLAY = void 0;
+	  var PARTS_AND_SERVICES = void 0;
+	
+	  function addEvent(element, eventType, handler, useCapture) {
+	    var i = void 0;
+	    var capture = typeof useCapture !== 'undefined' ? useCapture : true;
+	    if (element.length && !element.window) {
+	      element.forEach(function (el) {
+	        return addEvent(el, eventType, handler);
+	      });
+	    } else {
+	      if (element.addEventListener) {
+	        // DOM Level 2 browsers
+	        element.addEventListener(eventType, handler, capture);
+	      } else if (element.attachEvent) {
+	        // IE <= 8
+	        element.attachEvent('on' + eventType, handler);
+	      } else {
+	        // ancient browsers
+	        element['on' + eventType] = handler; // eslint-disable-line
+	      }
+	    }
+	  }
+	
+	  function hasClass(classNames, className) {
+	    var parts = void 0;
+	    var i = void 0;
+	    var klass = void 0;
+	
+	    if ((typeof classNames === 'undefined' ? 'undefined' : _typeof(classNames)) === 'object' && classNames.getAttribute) {
+	      if (typeof classNames.className.baseVal !== 'undefined') {
+	        parts = classNames.className.baseVal.split(' ');
+	      } else {
+	        parts = classNames.className.split(' '); // baseVal is for svg
+	      }
+	    } else {
+	      parts = classNames.split(' ');
+	    }
+	
+	    for (i = 0; i < parts.length; i++) {
+	      klass = parts[i];
+	      if ((typeof className === 'undefined' ? 'undefined' : _typeof(className)) === 'object' && className.test) {
+	        if (className.test(klass)) return true;
+	      } else {
+	        if (klass === className) return true;
+	      }
+	    }
+	    return false;
+	  }
+	
+	  function addLoaderToDOM() {
+	    var loader = document.createElement('div');
+	    loader.id = 'thd-cart-loader';
+	    loader.innerHTML = '<div class="pre-loader"><div class="segment-spinner"></div></div>';
+	    document.body.appendChild(loader);
+	  }
+	
+	  function removeLoaderFromDOM() {
+	    var el = document.querySelector('#thd-cart-loader');
+	    if (el) {
+	      document.body.removeChild(el);
+	    }
+	  }
+	
+	  function fallbackHost(host) {
+	    if (host) return host;
+	    return window.location.protocol + '//' + window.location.host;
+	  }
+	
+	  function tabletToDesktop(channel) {
+	    if (channel === 'tablet') {
+	      return 'desktop';
+	    }
+	    return channel;
+	  }
+	
+	  function cacheBustSrc(src) {
+	    var parts = src.split('#');
+	    var hasQuery = void 0;
+	    var sep = void 0;
+	    var bust = void 0;
+	    if (parts.length < 2) {
+	      return src;
+	    }
+	    hasQuery = parts[0].indexOf('?') === -1;
+	
+	    if (hasQuery) {
+	      sep = '?bust=';
+	    } else {
+	      sep = '&bust=';
+	    }
+	
+	    if (typeof THD_VERSION !== 'undefined' && THD_VERSION.VERSION) {
+	      bust = THD_VERSION.VERSION;
+	    } else {
+	      bust = new Date().getTime();
+	    }
+	    return parts[0] + sep + bust + '#' + parts[1];
+	  }
+	
+	  function bindOverlay(overlay, elClassName) {
+	    addEvent(document, 'click', function (e) {
+	      var target = e.target || e.srcElement;
+	      if (hasClass(target, /^js-atc/) && hasClass(target, elClassName)) {
+	        e.preventDefault();
+	        var src = target.getAttribute('href');
+	        if (!src) {
+	          src = target.getAttribute('data-href');
+	        }
+	        if (/open\(/.test(src)) {
+	          var parts = /open\(["']([^['"]*)/.exec(src);
+	          src = parts[1];
+	        }
+	        var opts = Object.assign({}, {
+	          width: target.getAttribute('data-width') || overlay.opts.width,
+	          height: target.getAttribute('data-height') || overlay.opts.height
+	        });
+	
+	        if (window.top === window.self) {
+	          overlay.open(src, opts);
+	        } else {
+	          // if its not an iframe assume im already on the overlay app
+	          window.location.href = cacheBustSrc(src);
+	        }
+	      }
+	    });
+	  }
+	
+	  var LOCAL_STORAGE_AVAILABLE = void 0;
+	  function storageAvailable(type) {
+	    var storage = void 0;
+	    var keyVal = '__storage_test';
+	    if (typeof LOCAL_STORAGE_AVAILABLE === 'boolean') {
+	      return LOCAL_STORAGE_AVAILABLE;
+	    }
+	    try {
+	      storage = window[type];
+	      storage.setItem(keyVal, keyVal);
+	      storage.removeItem(keyVal);
+	      LOCAL_STORAGE_AVAILABLE = true;
+	      return true;
+	    } catch (e) {
+	      LOCAL_STORAGE_AVAILABLE = false;
+	      return false;
+	    }
+	  }
+	
+	  function frameCb(response, ddFlag) {
+	    var jq = void 0;
+	    if ($ && $.fn) {
+	      jq = $;
+	    } else if (typeof window.jQuery !== 'undefined') {
+	      jq = window.jQuery;
+	    }
+	    if (response && response.type === 'receive_cart') {
+	      var resp = response.resp;
+	      if (!resp || !resp.CartModel) {
+	        this.trigger('error', resp);
+	        return;
+	      }
+	      if (resp.CartModel.errorModel) {
+	        this.trigger('error', resp);
+	        return;
+	      }
+	      if (resp.CartModel) {
+	        cookieUtils.initializeCookieManager();
+	        if (jq) {
+	          jq(document).trigger({ type: 'cartUpdated' });
+	        }
+	        this.trigger('success', resp);
+	      }
+	    }
+	    if (response && response.type === 'add-to-list') {
+	      if (!myList.saveToList) {
+	        // console.warn('myList module not installed');
+	      } else if (jq) {
+	        var listParams = { item: {} };
+	        listParams.$trigger = jq('body');
+	        listParams.item.itemId = response.itemId;
+	        listParams.item.quantity = response.quantity;
+	        listParams.item.imageURL = response.imageUrl;
+	
+	        if (response.source) {
+	          listParams.source = response.source;
+	        } else {
+	          listParams.source = 'cart';
+	        }
+	        // listParams.item.blindsItemId = 'blinds-config-id';
+	        myList.saveToList(listParams);
+	      }
+	    }
+	
+	    if (response && response.type === 'dd_event_cart' && ddFlag) {
+	      try {
+	        digitalData.cart = response.data.cart;
+	        if (response.data.legacy) {
+	          digitalData.legacy = response.data.legacy;
+	        }
+	      } catch (e) {
+	        if (console && console.error) console.error(e);
+	      }
+	    }
+	
+	    if (response && response.type === 'dd_event' && ddFlag) {
+	      try {
+	        digitalData.event.push(response.data);
+	      } catch (e) {
+	        if (console && console.error) console.error(e);
+	      }
+	    }
+	
+	    if (response && response.type === 'localized') {
+	      this.trigger(response.type, response.data);
+	    }
+	
+	    if (response && response.type === 'paypal') {
+	      this.trigger(response.type, response.data);
+	    }
+	
+	    if (response && response.type === 'dd_event_error' && ddFlag) {
+	      try {
+	        if (!digitalData.page.error || !digitalData.page.error.length) {
+	          digitalData.page.error = [];
+	        }
+	        digitalData.page.error.push(response.data);
+	      } catch (e) {
+	        if (console && console.error) console.error(e);
+	      }
+	    }
+	  }
+	
+	  function paypalCb(response) {
+	    if (response && response.status === 'success') {
+	      window.location.href = response.url;
+	    } else if (!response || response.status === 'error') {
+	      // todo remove loader
+	      removeLoaderFromDOM();
+	      this.trigger('error', response.errorModel);
+	    }
+	  }
+	
+	  function shouldRouteToCheckAvailabilty(cartModel) {
+	    var caMethods = ['DeliverFromStore', 'DirectDelivery'];
+	    var model = cartModel;
+	    // dont call ca for multi-item
+	    if (typeof cartModel.length !== 'undefined') {
+	      if (cartModel.length > 1) {
+	        return false;
+	      }
+	      model = cartModel[0];
+	    }
+	
+	    if (caMethods.indexOf(model.fulfillmentMethod) !== -1) {
+	      return true;
+	    }
+	    return false;
+	  }
+	
+	  function shouldRouteToBSSoverlay(cartModel) {
+	    var options = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : {};
+	
+	    var bssMethods = ['BOPIS', 'ShipToStore'];
+	    var model = cartModel.length ? cartModel[0] : cartModel;
+	    var channel = options.channel;
+	    if (channel !== 'mobile') return false;
+	    if (bssMethods.indexOf(model.fulfillmentMethod) !== -1) {
+	      return true;
+	    }
+	    return false;
+	  }
+	
+	  function preload(url) {
+	    var cb = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : function () {};
+	
+	    var THD_CART_PRELOAD = 'THD_CART_PRELOAD';
+	    var loaded = false;
+	
+	    if (!storageAvailable('localStorage')) {
+	      cb();
+	      return;
+	    }
+	    var ts = window.localStorage.getItem(THD_CART_PRELOAD);
+	    var d = new Date().getTime();
+	    if (ts && (d - ts) / 1000 < 86400) {
+	      cb();
+	      return;
+	    }
+	    var iframe = document.createElement('iframe');
+	    iframe.style.display = 'none';
+	    iframe.onload = function () {
+	      if (storageAvailable('localStorage')) {
+	        window.localStorage.setItem(THD_CART_PRELOAD, d);
+	      }
+	      document.body.removeChild(iframe);
+	      iframe = null;
+	      cb();
+	      return;
+	    };
+	    iframe.src = cacheBustSrc(url);
+	    document.body.appendChild(iframe);
+	  }
+	
+	  function checkAvailability(_ref) {
+	    var itemId = _ref.itemId,
+	        _ref$channel = _ref.channel,
+	        channel = _ref$channel === undefined ? 'mobile' : _ref$channel,
+	        _ref$zipCode = _ref.zipCode,
+	        zipCode = _ref$zipCode === undefined ? 'zip' : _ref$zipCode,
+	        host = _ref.host,
+	        _ref$submit = _ref.submit,
+	        submit = _ref$submit === undefined ? false : _ref$submit,
+	        _ref$height = _ref.height,
+	        height = _ref$height === undefined ? 277 : _ref$height,
+	        _ref$fulfillmentMetho = _ref.fulfillmentMethod,
+	        fulfillmentMethod = _ref$fulfillmentMetho === undefined ? 'DirectDelivery' : _ref$fulfillmentMetho,
+	        _ref$ignoreThrottle = _ref.ignoreThrottle,
+	        ignoreThrottle = _ref$ignoreThrottle === undefined ? false : _ref$ignoreThrottle,
+	        _ref$noIframe = _ref.noIframe,
+	        noIframe = _ref$noIframe === undefined ? false : _ref$noIframe,
+	        _ref$digitalDataFlag = _ref.digitalDataFlag,
+	        digitalDataFlag = _ref$digitalDataFlag === undefined ? true : _ref$digitalDataFlag,
+	        warrantyItemId = _ref.warrantyItemId,
+	        _ref$quantity = _ref.quantity,
+	        quantity = _ref$quantity === undefined ? '1' : _ref$quantity;
+	
+	
+	    var action = 'action';
+	    if (submit && zipCode) {
+	      action = 'submit';
+	    }
+	
+	    var params = [];
+	    if (zipCode) {
+	      params.push(zipCode);
+	    }
+	    if (action) {
+	      params.push(action);
+	    }
+	    if (quantity) {
+	      params.push(quantity);
+	    }
+	
+	    if (warrantyItemId) {
+	      params.push(warrantyItemId);
+	    }
+	
+	    params.push(tabletToDesktop(channel));
+	
+	    var url = fallbackHost(host) + '/mycart/overlay#/check-availability/add/' + itemId + '/' + fulfillmentMethod + '/' + params.join('/'); // eslint-disable-line max-len
+	    if (window.top !== window.self || noIframe) {
+	      Overlay.postMessage({
+	        action: 'REST_OPEN_OVERLAY'
+	      });
+	      window.location.href = cacheBustSrc(url);
+	      return null;
+	    }
+	
+	    if (!CHECK_AVAILABILITY_OVERLAY) {
+	      CHECK_AVAILABILITY_OVERLAY = new Overlay({
+	        channel: channel,
+	        mobileDirection: 'bottom',
+	        height: height,
+	        useCustomFrameListner: true
+	      });
+	    }
+	    CHECK_AVAILABILITY_OVERLAY.off('frame.cart');
+	    CHECK_AVAILABILITY_OVERLAY.on('frame.cart', function f(resp) {
+	      frameCb.call(this, resp, digitalDataFlag);
+	    });
+	
+	    CHECK_AVAILABILITY_OVERLAY.open(url); // eslint-disable-line max-len
+	
+	    return CHECK_AVAILABILITY_OVERLAY;
+	  }
+	
+	  function selectAStore(_ref2) {
+	    var itemId = _ref2.itemId,
+	        lineItemId = _ref2.lineItemId,
+	        _ref2$channel = _ref2.channel,
+	        channel = _ref2$channel === undefined ? 'mobile' : _ref2$channel,
+	        host = _ref2.host,
+	        _ref2$isShipToHomeEli = _ref2.isShipToHomeEligible,
+	        isShipToHomeEligible = _ref2$isShipToHomeEli === undefined ? false : _ref2$isShipToHomeEli,
+	        _ref2$keyword = _ref2.keyword,
+	        keyword = _ref2$keyword === undefined ? '' : _ref2$keyword,
+	        height = _ref2.height,
+	        _ref2$localStore = _ref2.localStore,
+	        localStore = _ref2$localStore === undefined ? false : _ref2$localStore,
+	        _ref2$ignoreThrottle = _ref2.ignoreThrottle,
+	        ignoreThrottle = _ref2$ignoreThrottle === undefined ? false : _ref2$ignoreThrottle,
+	        _ref2$digitalDataFlag = _ref2.digitalDataFlag,
+	        digitalDataFlag = _ref2$digitalDataFlag === undefined ? true : _ref2$digitalDataFlag,
+	        _ref2$quantity = _ref2.quantity,
+	        quantity = _ref2$quantity === undefined ? null : _ref2$quantity;
+	
+	
+	    if (!SELECT_A_STORE_OVERLAY) {
+	      SELECT_A_STORE_OVERLAY = new Overlay({
+	        channel: channel,
+	        mobileDirection: 'bottom',
+	        height: height || (!localStore ? 660 : 355),
+	        width: 1000,
+	        useCustomFrameListner: true
+	      });
+	    }
+	
+	    var id = void 0;
+	    var m = void 0;
+	    if (lineItemId) {
+	      m = 'edit';
+	      id = lineItemId;
+	    } else {
+	      m = 'add';
+	      id = itemId;
+	    }
+	    var shipToHome = '';
+	    if (isShipToHomeEligible) {
+	      shipToHome = 'shipToHome';
+	    }
+	
+	    var url = void 0;
+	    var params = [];
+	    if (keyword) {
+	      params.push(keyword.trim());
+	    }
+	    if (localStore) {
+	      params.push('local');
+	    }
+	    if (shipToHome) {
+	      params.push(shipToHome);
+	    }
+	
+	    if (quantity) {
+	      params.push('q/' + quantity);
+	    }
+	
+	    params.push(tabletToDesktop(channel.trim()));
+	
+	    url = fallbackHost(host) + '/mycart/overlay#select-a-store/' + m.trim() + '/' + id.trim() + '/' + params.join('/'); // eslint-disable-line max-len
+	    // helpers for success and failure
+	    SELECT_A_STORE_OVERLAY.off('frame.cart');
+	    SELECT_A_STORE_OVERLAY.on('frame.cart', function f(resp) {
+	      frameCb.call(this, resp, digitalDataFlag);
+	    });
+	    SELECT_A_STORE_OVERLAY.open(url);
+	
+	    return SELECT_A_STORE_OVERLAY;
+	  }
+	
+	  function addToCart(cartModel) {
+	    var options = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : {
+	      channel: 'mobile',
+	      host: host,
+	      paypal: false,
+	      ignoreThrottle: false,
+	      noIframe: false,
+	      digitalDataFlag: true,
+	      hidden: false,
+	      open: true,
+	      bypassBss: false,
+	      misship: false
+	    };
+	
+	    var hidden = typeof options.hidden !== 'undefined' ? options.hidden : false;
+	    var open = typeof options.open !== 'undefined' ? options.open : true;
+	    var ddFlag = typeof options.digitalDataFlag !== 'undefined' ? options.digitalDataFlag : true;
+	    var bypassBss = typeof options.bss !== 'undefined' ? options.bypassBss : false;
+	    var misship = typeof options.misship !== 'undefined' ? options.misship : false;
+	
+	    if (options.paypal) {
+	      hidden = true;
+	      addLoaderToDOM();
+	    }
+	
+	    if (shouldRouteToCheckAvailabilty(cartModel)) {
+	      var model = cartModel;
+	      if (model.length) {
+	        model = cartModel[0];
+	      }
+	      var caParams = {
+	        itemId: model.itemId,
+	        host: options.host,
+	        fulfillmentMethod: model.fulfillmentMethod,
+	        channel: options.channel,
+	        digitalDataFlag: ddFlag,
+	        paypal: options.paypal,
+	        noIframe: options.noIframe,
+	        ignoreThrottle: options.ignoreThrottle,
+	        hidden: hidden,
+	        open: open
+	      };
+	      if (model.fulfillmentLocation) {
+	        caParams.submit = true;
+	        caParams.zipCode = model.fulfillmentLocation;
+	      }
+	      if (model.warrantyItem) {
+	        caParams.warrantyItemId = model.warrantyItem.itemId;
+	      }
+	
+	      if (model.quantity) {
+	        caParams.quantity = model.quantity;
+	      }
+	
+	      return checkAvailability(caParams);
+	    }
+	
+	    if (!bypassBss && shouldRouteToBSSoverlay(cartModel, options)) {
+	      var _model = cartModel.length ? cartModel[0] : cartModel;
+	      var bssOptions = {
+	        itemId: _model.itemId,
+	        channel: options.channel,
+	        host: options.host,
+	        digitalDataFlag: options.digitalDataFlag,
+	        ignoreThrottle: options.ignoreThrottle,
+	        quantity: _model.quantity
+	      };
+	      return selectAStore(bssOptions);
+	    }
+	
+	    if (!ATC_OVERLAY) {
+	      ATC_OVERLAY = new Overlay({
+	        iframeSrc: cacheBustSrc(fallbackHost(options.host) + '/mycart/overlay#add-to-cart/' + tabletToDesktop(options.channel)),
+	        height: 588,
+	        speed: '500ms',
+	        header: false,
+	        hidden: hidden,
+	        channel: options.channel,
+	        useCustomFrameListner: true
+	      });
+	    }
+	
+	    ATC_OVERLAY.off('load.cart');
+	    ATC_OVERLAY.on('load.cart', function load() {
+	      ATC_OVERLAY.off('load.cart');
+	      if (cartModel.length) {
+	        ATC_OVERLAY.postMessage({
+	          type: 'atc-add-items',
+	          items: cartModel
+	        });
+	      } else {
+	        ATC_OVERLAY.postMessage({
+	          type: 'atc-add-item',
+	          item: cartModel
+	        });
+	      }
+	
+	      ATC_OVERLAY.postMessage({
+	        type: 'atc-submit',
+	        payPal: options.paypal,
+	        misship: misship
+	      });
+	    });
+	    ATC_OVERLAY.off('success.cart');
+	    ATC_OVERLAY.on('success.cart', function success() {
+	      var jq = void 0;
+	      if ($ && $.fn) {
+	        jq = $;
+	      } else if (typeof window.jQuery !== 'undefined') {
+	        jq = window.jQuery;
+	      }
+	      cookieUtils.initializeCookieManager();
+	      if (jq) {
+	        jq(document).trigger({ type: 'cartUpdated' });
+	      }
+	    });
+	    // helpers for success and failur
+	    ATC_OVERLAY.off('frame.cart');
+	    ATC_OVERLAY.on('frame.cart', function f(resp) {
+	      frameCb.call(this, resp, ddFlag);
+	    });
+	    if (options.paypal) {
+	      ATC_OVERLAY.off('paypal.cart');
+	      ATC_OVERLAY.on('paypal.cart', function f(resp) {
+	        removeLoaderFromDOM();
+	        paypalCb.call(this, resp, ddFlag);
+	      });
+	    }
+	
+	    if (open) {
+	      ATC_OVERLAY.open();
+	    }
+	    return ATC_OVERLAY;
+	  }
+	
+	  function partsAndServices(_ref3) {
+	    var lineItemId = _ref3.lineItemId,
+	        _ref3$channel = _ref3.channel,
+	        channel = _ref3$channel === undefined ? 'mobile' : _ref3$channel,
+	        _ref3$tab = _ref3.tab,
+	        tab = _ref3$tab === undefined ? 'required-parts' : _ref3$tab,
+	        host = _ref3.host,
+	        _ref3$ignoreThrottle = _ref3.ignoreThrottle,
+	        ignoreThrottle = _ref3$ignoreThrottle === undefined ? false : _ref3$ignoreThrottle,
+	        _ref3$digitalDataFlag = _ref3.digitalDataFlag,
+	        digitalDataFlag = _ref3$digitalDataFlag === undefined ? true : _ref3$digitalDataFlag;
+	
+	
+	    if (!PARTS_AND_SERVICES) {
+	      PARTS_AND_SERVICES = new Overlay({
+	        channel: channel,
+	        mobileDirection: 'bottom',
+	        height: 660,
+	        useCustomFrameListner: true
+	      });
+	    }
+	    PARTS_AND_SERVICES.off('frame.cart');
+	    PARTS_AND_SERVICES.on('frame.cart', function f(resp) {
+	      frameCb.call(this, resp, digitalDataFlag);
+	    });
+	    var url = fallbackHost(host) + '/mycart/overlay#/parts-and-services/' + lineItemId + '/' + tab + '/' + tabletToDesktop(channel);
+	    PARTS_AND_SERVICES.open(url); // eslint-disable-line max-len
+	
+	    return PARTS_AND_SERVICES;
+	  }
+	
+	  function bind(_ref4) {
+	    var _ref4$channel = _ref4.channel,
+	        channel = _ref4$channel === undefined ? 'mobile' : _ref4$channel,
+	        _ref4$env = _ref4.env,
+	        env = _ref4$env === undefined ? 'http://www.homedepot.com' : _ref4$env,
+	        _ref4$digitalDataFlag = _ref4.digitalDataFlag,
+	        digitalDataFlag = _ref4$digitalDataFlag === undefined ? true : _ref4$digitalDataFlag,
+	        _ref4$ps = _ref4.ps2,
+	        ps2 = _ref4$ps === undefined ? false : _ref4$ps;
+	
+	
+	    var selectAStoreOverlay = new Overlay({
+	      channel: channel,
+	      mobileDirection: 'bottom',
+	      height: 660,
+	      useCustomFrameListner: true
+	    });
+	    selectAStoreOverlay.off('frame.cart');
+	    selectAStoreOverlay.on('frame.cart', function f(resp) {
+	      frameCb.call(this, resp, digitalDataFlag);
+	    });
+	    bindOverlay(selectAStoreOverlay, 'js-atc-select-store');
+	
+	    var atc = new Overlay({
+	      channel: channel,
+	      mobileDirection: 'bottom',
+	      height: 660,
+	      useCustomFrameListner: true
+	    });
+	    ATC_OVERLAY = atc;
+	    atc.off('frame.cart');
+	    atc.on('frame.cart', function f(resp) {
+	      frameCb.call(this, resp, digitalDataFlag);
+	    });
+	    bindOverlay(atc, 'js-atc');
+	
+	    var ca = new Overlay({
+	      channel: channel,
+	      mobileDirection: 'bottom',
+	      height: 277,
+	      useCustomFrameListner: true
+	    });
+	    ca.off('frame.cart');
+	    ca.on('frame.cart', function f(resp) {
+	      frameCb.call(this, resp, digitalDataFlag);
+	    });
+	    bindOverlay(ca, 'js-atc-check-availability');
+	
+	    var psChannel = void 0;
+	
+	    if (ps2) {
+	      psChannel = channel === 'desktop' ? 'desktop-fullscreen' : channel;
+	    } else {
+	      psChannel = channel;
+	    }
+	    var pas = new Overlay({
+	      channel: psChannel,
+	      direction: channel === 'mobile' ? 'bottom' : 'top',
+	      height: 583,
+	      useCustomFrameListner: true
+	    });
+	    pas.off('frame.cart');
+	    pas.on('frame.cart', function f(resp) {
+	      frameCb.call(this, resp, digitalDataFlag);
+	    });
+	    // pas.on('frame', eventHandler.bind('parts-and-services'));
+	    bindOverlay(pas, 'js-atc-parts-and-services');
+	
+	    return {
+	      selectAStore: selectAStoreOverlay,
+	      atc: atc,
+	      checkAvailability: ca,
+	      partsAndServices: pas
+	    };
+	  }
+	
+	  return {
+	    addToCart: addToCart,
+	    selectAStore: selectAStore,
+	    checkAvailability: checkAvailability,
+	    partsAndServices: partsAndServices,
+	    preload: preload,
+	    bind: bind,
+	    bindOverlay: bindOverlay
+	  };
+	});
+
+/***/ }),
+/* 1 */
+/***/ (function(module, exports) {
+
+	module.exports = __WEBPACK_EXTERNAL_MODULE_1__;
+
+/***/ }),
+/* 2 */
+/***/ (function(module, exports) {
+
+	module.exports = __WEBPACK_EXTERNAL_MODULE_2__;
+
+/***/ }),
+/* 3 */
+/***/ (function(module, exports) {
+
+	module.exports = __WEBPACK_EXTERNAL_MODULE_3__;
+
+/***/ }),
+/* 4 */
+/***/ (function(module, exports) {
+
+	module.exports = __WEBPACK_EXTERNAL_MODULE_4__;
+
+/***/ })
+/******/ ])});;
+//# sourceMappingURL=thd-cart-bindings.amd.js.map

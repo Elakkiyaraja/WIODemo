@@ -1,0 +1,1816 @@
+/**
+ * @module Localizer
+ * @param  {object} root window/node global instance
+ * @param  {function} factory Localizer factory
+ * @return {RepositoryService} Localizer instance
+ */
+(function(root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define('Localizer', [
+      'statusService',
+      'storeService',
+      'localizationServiceProxy',
+      'repositoryService',
+      'es6-promise',
+      'thd-event-emitter'],
+      function(userService, storeService, localizationServiceProxy, repositoryService, ES6PromisePolyfill, EventEmitter) {
+        return factory(root, userService, storeService, localizationServiceProxy, repositoryService, ES6PromisePolyfill, EventEmitter);
+      });
+  } else {
+    root.Localizer = factory(root, userService, storeService, localizationServiceProxy, repositoryService, ES6PromisePolyfill, EventEmitter);
+  }
+})(this, function(root, userService, storeService, localizationServiceProxy, repositoryService, ES6PromisePolyfill, EventEmitter) {
+
+  /**
+   * ES6 Promise, pollyfills if browser doesn't support ES6
+   * @type {function}
+   */
+  var Promise = Promise || ES6PromisePolyfill.Promise;
+
+  /**
+   * PubSub extends EventEmitter functionalities
+   */
+  var PubSub = function() {};
+  EventEmitter.extend(PubSub);
+
+  /**
+   * @private
+   * @member LocalizerEventEmitter
+   * @description An instance of PubSub. Only events pertaining to localizer are registered here.
+   * @type {object}
+   */
+  var LocalizerEventEmitter = new PubSub();
+
+  /**
+   * @private
+   * @function subscribe
+   * @description Allows consumers to subscribe to Localizer events.
+   * @param  {array} events  events to be listened to.
+   * @param  {object} eventHandler handler to be invoked upon an event/events.
+   */
+  var subscribe = function(events, eventHandler) {
+    LocalizerEventEmitter.on(events, eventHandler);
+  }
+
+  /**
+   * @private
+   * @function unsubscribe
+   * @description Allows consumers to unsubscribe from Localizer events.
+   * @param  {array} events  events to be listened to.
+   */
+  var unSubscribe = function(event) {
+    LocalizerEventEmitter.off(event);
+  }
+
+  /**
+   * @private
+   * @function publish
+   * @description Allow Localizer to publish events to all listerners
+   * @param  {array} event event to be pubslhed.
+   */
+  var publish = function(events) {
+    LocalizerEventEmitter.trigger.apply(LocalizerEventEmitter, arguments);
+  }
+
+  /**
+   * @constant
+   * @description GPS timeout in milliseconds
+   * @type {Number}
+   */
+  var timeout = 5000;
+
+  /**
+   * @constant
+   * @description GPS position accuracy threshold - in meters
+   * @type {Number}
+   */
+  var ACCURACY_THRESHOLD_LOW = 804.672; // 0.5 miles
+
+  /**
+   * @constant
+   * @description  GPS position accuracy threshold in meters
+   * @type {Number}
+   */
+  var ACCURACY_THRESHOLD_HIGH = 80467.2; // 50 miles
+
+  /**
+   * Events triggered by localizer during the localization process cycle
+   * @type {Event}
+   */
+  var event = {
+    // success events
+    /** @event */
+    LOCALIZED_BY_IP: 'localized_by_ip',
+    /** @event */
+    LOCALIZED_BY_GPS: 'localized_by_gps',
+    /** @event */
+    LOCALIZED_BY_DEFAULT: 'localize_default',
+    /** @event */
+    LOCALIZED_BY_STORE: 'localized_by_store',
+    /** @event */
+    LOCALIZED_STORE_CHANGED: 'localized_store_changed',
+    /** @event */
+    LOCALIZED: 'localize_complete',
+    // error events
+    /** @event */
+    LOCALIZE_BY_STORE_FAILED: 'localize_by_store_failed',
+    /** @event */
+    LOCALIZE_BY_IP_FAILED: 'localize_by_ip_failed',
+    /** @event */
+    USER_DENIED_GPS: 'user_denied_gps',
+    /** @event */
+    GPS_ERROR: 'gps_error',
+    /** @event */
+    GPS_TIMEOUT: 'gps_position_aquisition_timeout'
+  }
+
+  var userOperations = userService.operations;
+  var userStatus = userService.status;
+  var workflowMapper = userService.workflowMapper;
+
+
+  /**
+   * @function GetCurrentLocation
+   * @private
+   * @description Prompts user to share GPS location if browser supports
+   *
+   * @return {object} promise - Promise<Position>, Promise to resolve the position (geo-location)
+   */
+  var getCurrentLocation = function() {
+    return new Promise(function(resolve, reject) {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: timeout });
+      } else {
+        deferred.reject('Geo location is not supported');
+      }
+    });
+  }
+
+  /**
+   * @function IsRequestToSelfLocalize
+   * @private
+   * @description Checks if request from caller is to self localize (localize by store id)
+   * @param  {LocalizerRequest}  request LocalizerRequest with store id.
+   * @return {Boolean}  True if request is to self localize.
+   */
+  function isRequestToSelfLocalize(request) {
+    return request && request.storeId;
+  }
+
+  /**
+   * @function isCanadianStore
+   * @description  Checks the local store's country and returns true if canada else false.
+   * @param  {Store}  localStore store existing either in US or canada
+   * @return {Boolean} Returns true if store exists in canada else false.
+   */
+  function isCanadianStore(localStore) {
+    return localStore.address.country === 'CA';
+  }
+
+  /**
+   * @function ProcessResponse
+   * @private
+   * @description Run post localization workflow. <br>
+   * 1. Persist user's access network - internal/external/unknown. <br>
+   * 2. Persist localization workflow - can be either service side/client workflows. Refer StatusService <br>
+   * 3. Persist the localized store <br>
+   * 4. Update Analytics about the localization workflow <br>
+   * 5. Notify consumers of localization lifecycle events.<br>
+   *
+   * @param  {Store} localStore - Localized store
+   * @param  {String} workflow - Refer StatusService for workflows.
+   * @param  {Event} localizationEvent - event to be triggered of the localization life-cycle event.
+   * @param {string} localizationMethod Localization method passed by the consumer
+   */
+  var processResponse = function(localStore, workflow, localizationEvent, localizationMethod) {
+    var wasLocalized = userStatus.isLocalized();
+    userOperations.setLocalizationMode(workflow);
+    if (userStatus.isInternal(workflow)) {
+      userOperations.markAsInternalUser();
+    } else if (userStatus.isExternal(workflow)) {
+      userOperations.markAsExternalUser();
+    }
+    // iff accessed from store
+    userOperations.markAsInStoreUser(workflow);
+    storeService.setStore(localStore);
+    // sets the workflow for digital-data
+    localStorage.setItem('localizationMethod', (localizationMethod || workflowMapper[workflow].alias));
+    publish(event.LOCALIZED); // generic event
+    publish(localizationEvent); // specific event
+    if(wasLocalized) {
+      publish(event.LOCALIZED_STORE_CHANGED); // store changed.
+    }
+  }
+
+  /**
+   * @function HandleGpsError
+   * @private
+   * @description Handles GPS error
+   * If user didn't consent to share location (code==1)
+   * publish consumers that user denied to share location.
+   * Otherwise publish as generic GPS error.
+   *
+   * @param  {Error} error Browser navigator current position error
+   */
+  var handleGpsError = function(error) {
+    var errorEvent;
+    if(error.code === 1) {
+      errorEvent = event.USER_DENIED_GPS;
+      userOperations.setGpsStatus('gps access denied');
+    } else if(error.code === 3) {
+      errorEvent = event.GPS_TIMEOUT;
+      userOperations.setGpsStatus('gps timeout');
+    } else {
+      errorEvent = event.GPS_ERROR;
+      userOperations.setGpsStatus('gps error');
+    }
+    publish(errorEvent);
+  }
+
+  /**
+   * @function IsAccuracyBetweenThreshold
+   * @private
+   * @description Checks if the GPS accuracy falls between LOW and MEDIUM accuracy threshold
+   * @param  {Position}  position User's latitude, longitude, accuracy
+   * @return {Boolean}   True if GPS accuracy is within the LOW-MEDIUM range.
+   */
+  var isAccuracyBetweenThreshold = function(position) {
+    return position.coords.accuracy > ACCURACY_THRESHOLD_LOW && position.coords.accuracy < ACCURACY_THRESHOLD_HIGH;
+  }
+
+  /**
+   * @function IsCurrentAccuracyMediumOrLow
+   * @private
+   * @description checks if currently localized accuracy is Medium or Low
+   * @return {Boolean} true if current localization accuracy is Medium/Low.
+   */
+  var isCurrentAccuracyMediumOrLow = function() {
+    return userStatus.getAccuracy() === undefined ||
+    userStatus.getAccuracy() === 'LOW' || userStatus.getAccuracy() === 'MEDIUM';
+  }
+
+  /**
+   * @function LocalizeByGPS
+   * @private
+   * @description GPS: Geo-localize <br>
+   * Attempt to localize the user based on users' latitude, longitude and accuracy. Requests localization-service to localize
+   * based on user geo-position.<br>
+   * 1. If GPS accuracy is within ACCURACY_THRESHOLD_LOW (<0.5 miles) then classify the workflow as GPS_HIGH<br>
+   * 2. If GPS accuracy is between ACCURACY_THRESHOLD_LOW and ACCURACY_THRESHOLD_MEDIUM(<50 miles)
+   *   and current localization accuracy is Medium/Low then classify workflow as GPS_MEDIUM. <br>
+   * 3. If current localization accuracy is Low and GPS accuracy is beyond ACCURACY_THRESHOLD_MEDIUM (>50 miles)
+   *  then classify workflow as GPS_LOW.<br>
+   * @param  {Position} position User consent GPS information {lat, long, accuracy}
+   */
+  var localizeByGPS = function(position) {
+    userOperations.setGpsStatus('gps access granted');
+    localizationServiceProxy.getLocalStore(position.coords)
+      .then(function(localizationResponse) {
+        if(isCanadianStore(localizationResponse.localStore)) {
+          userOperations.markAsCanadianUser();
+          processResponse(storeService.getDefaultStore(), 'LOCALIZED_BY_DEFAULT', event.LOCALIZED_BY_DEFAULT);
+        } else {
+          var workflow;
+          if (position.coords.accuracy <= ACCURACY_THRESHOLD_LOW) {
+            workflow = 'LOCALIZED_BY_GPS_HIGH';
+          } else if (isAccuracyBetweenThreshold(position) && isCurrentAccuracyMediumOrLow()) {
+            workflow = 'LOCALIZED_BY_GPS_MEDIUM';
+          } else if (userStatus.getAccuracy() === 'LOW') {
+            workflow = 'LOCALIZED_BY_GPS_LOW';
+          }
+          processResponse(localizationResponse.localStore, workflow, event.LOCALIZED_BY_GPS);
+        }
+      });
+  }
+
+  /**
+   * @function LocalizeByIP
+   * @private
+   * @description AUTO-LOCALIZE: Attempts to localize the user based on IP. Requests localization-service to localize user based on IP.<br>
+   *  1. Mark user as auto localized.<br>
+   *  2. Mark user as INTERNAL if workflow is among [known,store,default-internal] else External or Unknown user.<br>
+   *  3. Set localized store based on the user's past ip history, Akamai's geo guess, subnet or known ip, store ip.<br>
+   *  4. Notify consumers that user has been localized by IP.<br>
+   * If localization-service fails to respond or localize. Notify of the failure and default localize the user
+   *
+   * @return {Promise} - A promise wrapper with LocalizerResponse, Promise<LocalizerResponse>
+   */
+  var localizeByIp = function(resolve, reject) {
+    localizationServiceProxy.getLocalStore() // get the closest store near to my location.
+      .then(function(localizationResponse) {
+        /*
+          If there is a race condition, then subsequent request might escape isLocalization condition.
+          An additional check eliminates further updates on auto localization.
+         */
+        if(userStatus.isLocalized()) {
+           resolve(localizerResponse);
+        } else {
+          if(isCanadianStore(localizationResponse.localStore)) {
+            userOperations.markAsCanadianUser();
+            // default to 121 to all canadian users
+            processResponse(storeService.getDefaultStore(), 'LOCALIZED_BY_DEFAULT', event.LOCALIZED_BY_DEFAULT);
+          } else {
+            processResponse(localizationResponse.localStore, localizationResponse.metadata.workflow, event.LOCALIZED_BY_IP);
+          }
+          resolve(localizerResponse);
+          promptUserToShareGpsLocation(); // Check if user wishes to share his/her location
+        }
+      }, function(error) {
+          publish(event.LOCALIZE_BY_IP_FAILED);
+          processResponse(storeService.getDefaultStore(), 'LOCALIZED_BY_DEFAULT', event.LOCALIZED_BY_DEFAULT);
+          resolve(localizerResponse);
+      });
+  }
+
+  /**
+   * @function LocalizeByStore
+   * @private
+   * @description SELF-LOCALIZE: Attempts to localize based on store ID. <br>
+   * Requests localization-service for store details for the given store ID.<br>
+   * 1. Marks the user as self localized. <br>
+   * 2. Set the localized store with retrieved store details.<br>
+   * 3. Trigger an event indicating that user has been localized to the store requested.<br>
+   *
+   * @param  {LocalizationRequest} request - LocalizationRequest with store ID.
+   * @param {string} workflow - Default workflow for localize by store
+   * @return {Promise} - A promise wrapper with LocalizerResponse, Promise<LocalizerResponse>
+   */
+  var localizeByStore = function(request, workflow) {
+    return new Promise(function(resolve, reject) {
+      localizationServiceProxy.getStore(request.storeId)
+        .then(function(localizationResponse) {
+          processResponse(localizationResponse.localStore, workflow||'LOCALIZED_BY_STORE',
+            event.LOCALIZED_BY_STORE, request.localizationMethod);
+          resolve(localizerResponse);
+        },function(error) {
+          publish(event.LOCALIZE_BY_STORE_FAILED);
+          reject(localizerResponse);
+        });
+    });
+  }
+
+  /**
+   * @function PromptUserToShareGpsLocation
+   * @private
+   * @description Prompt the user to share his/her geo location (lat,long,accuracy)
+   * If user consents then localize by GPS else Notify consumers and take no action.
+   */
+  var promptUserToShareGpsLocation = function() {
+    getCurrentLocation().then(localizeByGPS, handleGpsError);
+  }
+
+  /**
+   * Localizer Response
+   * @type LocalizerResponse
+   */
+  var localizerResponse = {
+
+    status: userService.status,
+
+    getLocalizedStore: function() {
+      return storeService.getStore();
+    },
+
+    getUserStore: function() {
+      return storeService.getUserStore();
+    }
+  };
+
+  /**
+   ************** REMOVE THIS CLOSURE POST MIGRATION *************
+   * This code is relevant only until migration to standardized localizer
+   * This closure will be removed once all consumers migrate to new localizer.
+   * This is to handle specific scenario like below:
+   * Homepage is using old localizer and the user self localizes.
+   * User navigates to PIP. PIP is using new localizer. since 'WORKFLOW' will not be present
+   * in local storage, PIP reruns the localize again. So a self localized user will be
+   * updated with a different store based on auto-localization in PIP page.
+   *
+   * To avoid this, workflow will be set on loading the new localizer module.
+   * Now when PIP loads new localizer module, workflow will be set based on the existing
+   * values set by the old localizer.
+   *
+   */
+  (function() {
+
+    /*
+     * **** This code should be either in Header header.myaccount.js or MyAccount module ****
+     * A work around for My Account. This method listens to updateUserStatus event
+     * triggered by MyAccount. Upon user sign in this event is triggered. And user
+     * should be updated to User's preferred store configured in his/her profile.
+     * @param  {string} event name - updateUserStatus
+     * @param {Function} event handler to localize by preferred store.
+     */
+    document.addEventListener('updateUserStatus', function() {
+      var store = storeService.getStore();
+      if(!!store) {
+        var localizerRequest = { storeId: store.storeId, localizationMethod: 'my account sign-in' };
+        localizeByStore(localizerRequest);
+      }
+    });
+
+    function doWorkflowExists() {
+      var workflow = userService.status.getWorkflow();
+      return !!workflow;
+    }
+
+    var aliasToWorkflow = {
+      'IP-DB:Corporate': 'KNOWN_LOCATION',
+      'IP-DB:Store': 'THD_STORE_LOCATION',
+      'IP-DB:History': 'LOC_HISTORY_BY_IP',
+      'Default': 'DEFAULT',
+      'IP-DB:Default Internal': 'DEFAULT_INTERNAL',
+      'IP-DB:Vendor': 'GEO_LOCATION',
+      'IP-DB:Similar History': 'LOC_HISTORY_BY_SUBNET',
+      'ESVS:Store': 'THD_STORE_LOCATION',
+      'in store access': 'THD_STORE_LOCATION',
+      'change store overlay': 'LOCALIZED_BY_STORE'
+    };
+    // WORKFLOW doesn't exist (will not exist when localizer is loaded for first time
+    // & yet to be localized Or consumers are using old localizer)
+    if(!doWorkflowExists()
+      // THD_FORCE_LOC is set
+      && (userService.status.isSelfLocalized()
+      || userService.status.isAutoLocalized()
+      || userService.status.isDefaultLocalized()
+      // THD_LOCSTORE is set
+      || storeService.getStore())) {
+      // THD_FORCE_LOC or THD_LOCSTORE are set without WORKFLOW, then it is guaranteed
+      // that consumers are loading old localizer
+      var localizationMethod = userStatus.__getLegacyLocalizationMethod();
+      if(localizationMethod) {
+        var workflow = aliasToWorkflow[localizationMethod] || 'LOCALIZED_BY_STORE';
+        userOperations.setWorkflow(workflow);
+        /*
+        * There is change in definition of self localization.
+        * Only iff user makes decision on store then its treated as self localization.
+        * This corrects that definition for those using old localizer.
+        */
+        userOperations.setLocalizationMode(workflow);
+      }
+      /* 1. User lands on homepage and new localizer is run. workflow created.
+       * 2. User navigates to PLP/PIP (using old localizer), and then self localizes using localization overlay.
+       *    Localizer internal state is updated. But workflow is not updated.
+       * 3. User navigates back to homepage (using standardized localizer) - WORKFLOW is updated.
+       */
+      else if(doWorkflowExists() & userService.status.isSelfLocalized()) {
+          var workflow = userService.status.getWorkflow();
+          var localizationMethod = userStatus.__getLegacyLocalizationMethod();
+          if(workflow !== 'LOCALIZED_BY_STORE') {
+            if(localizationMethod === 'change store overlay' ) {
+              // Self localized on page (using old localizer). Hence updating the workflow
+              userOperations.setWorkflow('LOCALIZED_BY_STORE');
+            } else {
+              // PIP changed localization mode in the backend. Updating in accordance with workflow.
+              userOperations.setLocalizationMode(workflow);
+            }
+          }
+      }
+    }
+  })();
+
+
+  return {
+
+    /**
+     * @member events that localizer triggers
+     * @type {Event}
+     * @example
+     * Localizer.on(Localizer.event.LOCALIZED, function(){})
+     */
+    event: event,
+
+    /**
+     * @member {Status} status - Status instance with methods to check the localization status.
+     * Status indicating the mode of localization
+     * @example
+     * Localizer.status.isSelfLocalized()
+     * @type {UserService.Status}
+     */
+    status: userService.status,
+
+    /**
+     * @function localize
+     * @description  Allows user to either<br>
+     * 1. Set the preferred store. <br>
+     * 2. Set the closest store. <br>
+     * 3. Set the defaults store #121
+     *
+     * @param {LocalizerRequest} request - Optional LocalizerRequest with storeId attribute
+     * @example
+     * 1. Localizer.localize({storeId: 121, localizationMethod:'Store finder'})
+     * 2. Localizer.localize()
+     * @fires  LOCALIZED
+     * @return {Promise} promise - Promise wrapping Localizer Response
+     */
+    localize: function(request) {
+      if (isRequestToSelfLocalize(request)) {
+        return localizeByStore(request);
+      }
+      if (userStatus.isLocalized()) {
+        return Promise.resolve(localizerResponse);
+      }
+      return new Promise(localizeByIp); // auto localize
+    },
+
+    /**
+     * @function localizeFuzzy
+     * @description Localizes user to the store ID passed provided <br>
+     * the current existing accuracy is MEDIUM or LOW. It means that <br>
+     * if user is auto/self/default localized with MEDIUM or LOW accuracy<br>
+     * then override by self localizing the user again with the given store ID.
+     * else resolve with the already localized store.<br>
+     *
+     * Note: This API should be used when caller is fuzzy about localizing
+     * the user for the given store ID.
+     * @example
+     * Localizer.localizeFuzzy({storeId: 154, localizationMethod:'Store finder'});
+     * @fires LOCALIZED
+     * @param  {LocalizerRequest} request - Mandatory, LocalizerRequest with storeId attribute
+     * @return {Promise} promise - Promise wrapping Localizer Response
+     */
+    localizeFuzzy: function(request) {
+      if(isCurrentAccuracyMediumOrLow()) {
+        return localizeByStore(request, 'LOCALIZED_BY_FUZZY_STORE');
+      }
+      return Promise.resolve(localizerResponse);
+    },
+
+    /**
+     * @function GetLocalizedStore
+     * @readOnly
+     * @description Returns of the localized store.
+     * @return {Store} store Localized Store
+     */
+    getLocalizedStore: function() {
+      return storeService.getStore();
+    },
+
+
+    /**
+     * @function getUserStore
+     * @description If HD is accessed from one of the store location, this method returns the store
+     * from where the user has accessed HD.com
+     * @return {object} Store details
+     */
+    getUserStore: function() {
+      return storeService.getUserStore();
+    },
+
+    /**
+     * @function on
+     * @description Allows consumers to subscribe to events from Localizer
+     * @param  {array} events  Array of events callee wants to listen to.
+     * @param  {object} eventHandler Handler to be invoked upon trigger of the event.
+     * @example
+     * 1. Localizer.on([Localizer.event.LOCALIZED, Localizer.event.LOCALIZED_BY_GPS], eventHandler(){})
+     * 2. Localizer.on(Localizer.event.LOCALIZED, eventHandler(){})
+     */
+    on: function(events, eventHandler) {
+      subscribe(events, eventHandler);
+    },
+
+    /**
+     * @function off
+     * @description Allows consumers to unsubscribe to events from Localizer
+     * @param  {string} event event to be unsubscribed
+     * @example
+     * 1. Localizer.off(Localizer.event.LOCALIZED)
+     */
+    off: function(event) {
+      unSubscribe(event);
+    }
+  }
+
+});
+
+define("localizer", ["cookie-utils","thd-event-emitter","es6-promise"], function(){});
+
+(function(root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define('localizerConfig', [],function() {
+        return factory(root);
+      });
+  } else {
+    root.localizerConfig = factory(root);
+  }
+})(this, function(root) {
+
+	var oneYear = 365*24*60*60*1000; // a year in milliseconds
+	var sixHundredDays = 600*24*60*60*1000 // 600 days in milliseconds
+	var session = 0;
+	var oneHour = 60*60*1000 // an hour in milliseconds
+
+	var localizerConfig = {
+				storageConfig : {
+					THD_INTERNAL: {
+						LOCALIZED_BY_GPS_HIGH: 		{ storage : 'cookie', expiry: session },
+						LOCALIZED_BY_STORE: 			{ storage : 'cookie', expiry: oneYear },
+						LOCALIZED_BY_FUZZY_STORE: { storage : 'cookie', expiry: session },
+						LOCALIZED_BY_DEFAULT: 		{ storage : 'cookie',	expiry: session },
+						LOCALIZED_BY_GPS_MEDIUM: 	{ storage : 'cookie', expiry: session },
+						LOCALIZED_BY_GPS_LOW: 		{ storage : 'cookie', expiry: session },
+						THD_STORE_LOCATION: 			{ storage : 'cookie', expiry: session },
+						KNOWN_LOCATION: 					{ storage : 'cookie', expiry: session },
+						LOC_HISTORY_BY_IP: 				{ storage : 'cookie', expiry: session },
+						LOC_HISTORY_BY_SUBNET: 		{ storage : 'cookie', expiry: session },
+						GEO_LOCATION: 						{ storage : 'cookie', expiry: session },
+						DEFAULT_INTERNAL: 				{ storage : 'cookie', expiry: session },
+						DEFAULT: 									{ storage : 'cookie', expiry: session },
+						DEFAULT_STORAGE: 					{ storage : 'cookie', expiry: session }
+					},
+					THD_FORCE_LOC: {
+						LOCALIZED_BY_GPS_HIGH: 		{ storage : 'cookie', expiry: session },
+						LOCALIZED_BY_STORE: 			{ storage : 'cookie', expiry: oneYear },
+						LOCALIZED_BY_FUZZY_STORE: { storage : 'cookie', expiry: session },
+						LOCALIZED_BY_DEFAULT: 		{ storage : 'cookie', expiry: session },
+						LOCALIZED_BY_GPS_MEDIUM: 	{ storage : 'cookie', expiry: session },
+						LOCALIZED_BY_GPS_LOW: 		{ storage : 'cookie', expiry: session },
+						THD_STORE_LOCATION: 			{ storage : 'cookie', expiry: session },
+						KNOWN_LOCATION: 					{ storage : 'cookie', expiry: session },
+						LOC_HISTORY_BY_IP: 				{ storage : 'cookie', expiry: session },
+						LOC_HISTORY_BY_SUBNET: 		{ storage : 'cookie', expiry: session },
+						GEO_LOCATION: 						{ storage : 'cookie', expiry: session },
+						DEFAULT_INTERNAL: 				{ storage : 'cookie', expiry: session },
+						DEFAULT: 									{ storage : 'cookie', expiry: session },
+						DEFAULT_STORAGE: 					{ storage : 'cookie', expiry: session }
+					},
+					THD_LOCSTORE: {
+						LOCALIZED_BY_GPS_HIGH:  	{ storage : 'cookieCrumb', expiry: oneYear },
+						LOCALIZED_BY_STORE: 			{ storage : 'cookieCrumb', expiry: oneYear },
+						LOCALIZED_BY_FUZZY_STORE: { storage : 'cookieCrumb', expiry: oneYear },
+						LOCALIZED_BY_DEFAULT: 		{ storage : 'cookieCrumb', expiry: oneYear },
+						LOCALIZED_BY_GPS_MEDIUM: 	{ storage : 'cookieCrumb', expiry: oneYear },
+						LOCALIZED_BY_GPS_LOW: 		{ storage : 'cookieCrumb', expiry: oneYear },
+						THD_STORE_LOCATION: 			{ storage : 'cookieCrumb', expiry: oneYear },
+						KNOWN_LOCATION: 					{ storage : 'cookieCrumb', expiry: oneYear },
+						LOC_HISTORY_BY_IP: 				{ storage : 'cookieCrumb', expiry: oneYear },
+						LOC_HISTORY_BY_SUBNET: 		{ storage : 'cookieCrumb', expiry: oneYear },
+						GEO_LOCATION: 						{ storage : 'cookieCrumb', expiry: oneYear },
+						DEFAULT_INTERNAL: 				{ storage : 'cookieCrumb', expiry: oneYear },
+						DEFAULT: 									{ storage : 'cookieCrumb', expiry: oneYear },
+						DEFAULT_STORAGE: 					{ storage : 'cookieCrumb', expiry: oneYear }
+					},
+					WORKFLOW: 									{ storage : 'cookie', 			 expiry: oneYear   },
+					GPS_STATUS: 								{ storage : 'session', 		 expiry: undefined },
+					localizationMethod: 				{ storage : 'local', 		 	 expiry: undefined },
+					HTTP_URL: 									{ storage : 'http', 			 expiry: undefined },
+					DEFAULT_STORAGE: 						{ storage : 'cookie', 		 expiry: session   },
+					THD_INSTORE: 								{ storage : 'cookie', 		 expiry: session	 },
+					THD_STORE_INFO:{
+              LOCALIZED_BY_STORE: 		{ storage : 'cookie',      expiry: oneYear   },
+              DEFAULT_STORAGE:        { storage : 'cookie', 		 expiry: session	 }
+          },
+					THD_STRFINDERZIP: 				  { storage : 'cookieCrumb', expiry: oneYear	 },
+					THD_STORE_HOURS: 						{ storage : 'cookieCrumb', expiry: oneHour	 },
+					loc_version: 								{ storage : 'session', 		 expiry: undefined },
+					THD_CA_USER: 								{ storage : 'cookie', 		 expiry: sixHundredDays },
+					THD_AUTOLOCINTERCEPT: 			{ storage : 'cookie', 		 expiry: sixHundredDays },
+
+					// Some of the code is redundent, Added to support the migration. Can be cleaned up
+					// once all consumers migrated to standardized localizer.
+					get: function(key, workflow) {
+						var storageConfig;
+						// If key is not among the standard defined here, use cookie as default storage
+						if(this[key] === undefined) {
+							return this.DEFAULT_STORAGE;
+						}
+						if(!workflow) {
+							/* If worklow is not defined, and the key is among the standard keys defined here
+								 then use the default storage for that key.
+							 */
+							storageConfig = this[key].DEFAULT_STORAGE;
+							/* If key is independent of the workflow, then key's value itself is storage config.
+								 Eg: WORKFLOW, localization method etc.
+							 */
+							if(storageConfig === undefined) {
+								storageConfig = this[key];
+							}
+						} else {
+              // If key is defined and workflow is not defined (irrespective of any workflow), then use the default storage for that key
+              if(this[key] && !this[key][workflow]) {
+                storageConfig = this[key]['DEFAULT_STORAGE'];
+              } else {
+                // If key and workflow are defined and key is among the standard defined here
+  							storageConfig = this[key][workflow];
+              }
+						}
+						return storageConfig;
+					}
+				}
+			}
+	return localizerConfig;
+})
+;
+/**
+ * @module Repository Service
+ * @param  {object} root    window/node global instance
+ * @param  {function} factory Repository service factory
+ * @return {RepositoryService} Repository Service instance
+ */
+(function(root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define('repositoryService', ['cookie-utils','es6-promise','localizerConfig'],
+      function(cookieUtils, ES6PromisePolyfill, localizerConfig) {
+        return factory(root, cookieUtils, ES6PromisePolyfill, localizerConfig);
+      });
+  } else {
+    root.repositoryService = factory(root, window.cookieManager, ES6PromisePolyfill, localizerConfig);
+  }
+})(this, function(root, cookieUtils, ES6PromisePolyfill, localizerConfig) {
+
+  var dataAccessStrategy = {};
+  var Promise = Promise || ES6PromisePolyfill.Promise;
+
+  /**
+   * @function isExpired
+   * @private
+   * @description Checks if the value persisted in storage has expired or not.
+   * @param  {object}  value value persisted in the storage.
+   * @return {Boolean} true if the value is expired else false.
+   */
+  function isExpired(value) {
+    var currentTime = new Date();
+    return (value.createTime && value.expireTime !== undefined &&
+      currentTime.getTime() - new Date(value.createTime).getTime() > value.expireTime);
+  }
+
+  /**
+   * constant
+   * @type {RegExp}
+   */
+  var urlPattern = /^http[s]{0,1}\:\/\/|^\/\/.+/; // http:// or https:// or //
+
+  /**
+   * @function isUrl
+   * @private
+   * @description Checks if the given key is URL or not.
+   * @param  {string}  key key to be checked against URL pattern
+   * @return {Boolean} true if the key is URL else false.
+   */
+  var isUrl = function(key) {
+    return urlPattern.test(key);
+  }
+
+  /**
+   * @private
+   * @function cleanUp
+   * @description Removes random function generated to receive callback and the script tags<br>
+   * added in head tag.
+   *
+   * @param  {DomElement} script Script tag to be removed from the page.
+   * @param  {function} generatedFunction random generated function to be removed from the window object.
+   */
+  var cleanUp = function(script, generatedFunction) {
+    script.parentNode.removeChild(script);
+    try {
+      delete window[generatedFunction];
+    } catch (e) {
+      window[generatedFunction] = undefined;
+    }
+  }
+
+  /**
+   * @private
+   * @function jsonp
+   * @description Allows to invoke cross origin service for a given url.
+   * @param  {string} url cross-origin service to be accessed.
+   * @return {object} promise Promise, wrapping remote-service response
+   */
+  var jsonp = function(url) {
+    return new Promise(function(resolve, reject) {
+      url = url.indexOf('?') === -1 ? url + '?' : url + '&';
+      var generatedFunction = 'loc' + Math.round(new Date().getTime() + Math.random() * 9999999);
+      var script = document.createElement('script');
+      script.src = url + 'callback=' + generatedFunction;
+      document.getElementsByTagName("head")[0].appendChild(script);
+      script.onerror = function(error) {
+        cleanUp(script, generatedFunction);
+        reject(error);
+      }
+      window[generatedFunction] = function(response) {
+        cleanUp(script, generatedFunction);
+        resolve(response);
+      }
+    });
+  }
+
+  /**
+   * @private
+   * @function isJson
+   * @description Check if the given value is json or not.
+   * @param  {object}  value value under test
+   * @return {Boolean} true if value is json string else false.
+   */
+  var isJson = function(value) {
+    if(typeof value === 'string') {
+      try {
+        JSON.parse(value)
+      } catch(e) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+ /**
+   * @member
+   * @description  Data Access Objects which read/writes to remote storage.
+   * @type {Object}
+   */
+  dataAccessStrategy.httpDAO = {
+    get: function(key) {
+      return jsonp(key);
+    },
+    put: function(key, value, expireAfter, domain) {
+      // to be implemented
+    },
+    remove: function(key) {
+      // to be implemented
+    }
+  }
+
+  cookieUtils.initializeCookieManager(window.THD_GLOBAL.cookieDomain);
+
+  /**
+   * @member
+   * @description Data Access Objects which read/writes to cookie storage.
+   * @type {Object}
+   */
+  dataAccessStrategy.cookieCrumbDAO = {
+
+    get: function(key) {
+      return cookieUtils.readCookie(key);
+    },
+    put: function(key, value, expireAfter, domain) {
+      var expiryAfterDays = expireAfter/(24*60*60*1000);
+      cookieUtils.createCookie(key, value, expiryAfterDays);
+    },
+    remove: function(key) {
+      cookieUtils.cookieManager.removeCookie(key);
+    }
+  }
+
+  /**
+   * @member
+   * @description Data Access Objects which read/writes to cookie storage.
+   * @type {Object}
+   */
+  dataAccessStrategy.cookieDAO = {
+
+    get: function(key) {
+      return cookieUtils.readCookie(key);
+    },
+    put: function(key, value, expireAfter, domain) {
+      if(expireAfter === 0) {
+        cookieUtils.setSessionOnlyCookie(key, value, domain);
+      } else {
+        cookieUtils.setCookieExpireInSeconds(key, value, expireAfter/1000, domain);
+      }
+    },
+    remove: function(key) {
+      cookieUtils.cookieManager.removeCookie(key);
+    }
+  }
+
+  /**
+   * @member
+   * @description Data Access Object which reads/writes to object on page.<br>
+   * key/values stored using this strategy would exist only until next page refresh.
+   * @type {Object}
+   */
+  dataAccessStrategy.pageDAO = {
+    data : {},
+    get: function(key) {
+      return this.data[key];
+    },
+    put: function(key, value, expireTime, domain) {
+      this.data[key] = value;
+    },
+    remove: function(key) {
+      try {
+        delete this.data[key];
+      } catch(e) {
+        this.data[key] = undefined;
+      }
+    }
+  }
+
+
+  /**
+   * @member
+   * @description Data Access Objects which read/writes to session storage
+   * @type {Object}
+   */
+  dataAccessStrategy.sessionDAO = {
+    get: function(key) {
+      var value = sessionStorage.getItem(key);
+      return isJson(value) ? JSON.parse(value) : value;
+    },
+    put: function(key, value, expireTime, domain) {
+      if(typeof value === 'object') {
+        sessionStorage.setItem(key, JSON.stringify(value), domain);
+      } else {
+        sessionStorage.setItem(key, value, domain);
+      }
+    },
+    remove: function(key) {
+      sessionStorage.removeItem(key);
+    }
+  }
+
+
+  /**
+   * @member
+   * @description Data Access Objects which read/writes to local storage.
+   * @type {Object}
+   */
+  dataAccessStrategy.localDAO = {
+
+    get: function(key) {
+      var value = localStorage.getItem(key);
+      value = value && (isJson(value) && JSON.parse(value)) || value;
+      if(value && isJson(value)) {
+        return isExpired(value) ? localStorage.removeItem(key) : value.data;
+      }
+      return value;
+    },
+
+    put: function(key, value, expireTime, domain) {
+      var wrapperValue = {
+        'createTime': new Date()
+      };
+      wrapperValue.data = value;
+      wrapperValue.expireTime = expireTime;
+      localStorage.setItem(key, JSON.stringify(wrapperValue));
+    },
+
+    remove: function(key) {
+      localStorage.removeItem(key);
+    }
+  }
+
+
+  /**
+   * @member
+   * @description Storage strategies.
+   * @type {Object}
+   */
+  var storage = {
+    'cookieCrumb': dataAccessStrategy.cookieCrumbDAO,
+    'cookie': dataAccessStrategy.cookieDAO,
+    'http': dataAccessStrategy.httpDAO,
+    'local': dataAccessStrategy.localDAO,
+    'session': dataAccessStrategy.sessionDAO,
+    'page': dataAccessStrategy.pageDAO
+  }
+
+
+   /**
+   * @member
+   * @description Key to Storage mapper. Maps a key to storage strategy.<br>
+   * Any value to be store should be configured here.
+   * @type {Object}
+   */
+  var workflowToStorageMapper = {
+    storageConfig: localizerConfig.storageConfig,
+
+    getDaoConfig: function(key, workflow) {
+      return isUrl(key) ? this.storageConfig.get('HTTP_URL') :
+         this.storageConfig.get(key, workflow);
+    }
+  }
+
+
+  /**
+   * @function getDao
+   * @private
+   * @description Returns the DAO instance. This can be Cookie, Local storage or Http.
+   * @param  {String} key - Key whose value to be retrieved or written.
+   * @param {string} storageStrategy - storage strategy key, optional, which allows consumer to choose the storage
+   * @return {DataAccessObject}   Data Access Object.
+   */
+  var getDaoConfig = function(key, workflow) {
+    return workflowToStorageMapper.getDaoConfig(key, workflow);
+  };
+
+  /**
+   * @instance
+   * @description Data Access Object Interface which chooses the storage strategy
+   * based on the configuration.
+   *
+   * @type {object}
+   */
+  var dataAccessObject = {
+
+    storageStrategy: storage,
+    /**
+     * @function get
+     * @description Retrieves the value from the storage.
+     * @param  {string} key key for the value to be retrieved.
+     * @param {string} storageStrategy - storage strategy key, optional, which allows consumer to choose the storage
+     * @return {object}   value for the given key.
+     */
+    get: function(key, workflow) {
+      var daoConfig = getDaoConfig(key, workflow)
+      var value = storage[daoConfig.storage].get(key);
+      if(value === null || value === '') {
+        return undefined;
+      }
+      return value;
+    },
+
+    /**
+     * @function put
+     * @description Persists the value in the storage
+     * @param  {string} key   key for the value to be persisted.
+     * @param  {object} value  value to be persisted
+     * @param  {long} expireAfter lifetime of the value.
+     * ExpireAfter = 0  : Store only for a session
+     * ExpireAfter = -1 : Store only for a page. Values do not exist between pages.
+     * @param  {string} domain  domain under which value to be persisted.
+     * @param {string} storageStrategy storage strategy key, optional, which allows consumer to choose the storage
+     *
+     */
+    put: function(key, value, workflow) {
+      var daoConfig = getDaoConfig(key, workflow);
+      return storage[daoConfig.storage].put(key, value, daoConfig.expiry, window.THD_GLOBAL.cookieDomain);
+    },
+
+    /**
+     * @function remove
+     * @description Removes the value for the given key
+     * @param  {string} key key for the value to be removed.
+     * @param {string} storageStrategy - storage strategy key, optional, which allows consumer to choose the storage
+     * @return {boolean} Returns true if the value successfully removed from storage else false.
+     */
+    remove: function(key, workflow) {
+      var daoConfig = getDaoConfig(key, workflow);
+      return storage[daoConfig.storage].remove(key);
+    }
+  }
+
+  /**
+   * Fix corrupted cookies
+   */
+  function fixLeadingZero() {
+    var expireAfterDays = 1;
+
+    try {
+      var storeCrumb = cookieUtils.readCookie('THD_LOCSTORE');
+      var storeId = storeCrumb.split('+')[0];
+
+      if (storeId.substr(0, 1).indexOf('0') !== -1) {
+        try {
+          cookieUtils.readCookie('THD_PERSIST').split(':;').forEach(function(el, i){
+            if (el.indexOf('C4_EXP') !== -1) {
+              cookieUtils.createCookie('THD_LOCSTORE', storeCrumb.substr(1), 365);
+              return;
+            }
+          })
+        } catch (e) {}
+
+      }
+    } catch (e) {}
+  }
+  fixLeadingZero(); // Execute once
+
+  /*
+    ***************** Can be REMOVED in future ****************
+    Pilot rollout of localizer persisted WORKFLOW in local storage.
+    Since localstorage is not accessible across domains, this was a problem
+    in browse and commerce pages. To mitigate cross domain access, WORKFLOW
+    has been moved to cookie.
+    Any page that had WORKFLOW in local storage will update the same to cookie.
+    Any page that had no WORKFLOW will write to cookie.
+  */
+  function fixCrossDomainStorage() {
+    var workflowCookie = dataAccessObject.get('WORKFLOW');
+
+    if (!workflowCookie) {
+      var workflow = dataAccessStrategy.localDAO.get('WORKFLOW');
+
+      if (workflow) {
+        dataAccessObject.put('WORKFLOW', workflow);
+      }
+    }
+  };
+  fixCrossDomainStorage();
+
+  return dataAccessObject;
+
+});
+/**
+ * @module LocalizationServiceProxy
+ * @param  {object} root    Window/Node
+ * @param  {function} factory  LocalizationServiceProxy factory
+ * @return {LocalizationServiceProxy}  LocalizationServiceProxy
+ */
+(function(root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define('localizationServiceProxy', ['repositoryService'],
+      function(repositoryService) {
+        return factory(root, repositoryService);
+      });
+  } else {
+      root.LocalizationServiceProxy = factory(root, repositoryService);
+  }
+})(this, function(root, repositoryService) {
+
+
+  /**
+   * Proxies localization-service
+   * @type {LocalizationServiceProxy}
+   */
+  var localizationServiceProxy = {
+    host: window.THD_GLOBAL.localizationApiHost,
+    service: '/LocalizationService/v1/localstore',
+
+    /**
+     * @function GetStore
+     * @description Call localization-service and get local store requested.
+     * @readOnly
+     * @param  {string} storeId Store to be retrieved.
+     * @return {Promise<LocalizationResponse>} promise - Promise to resolve/reject Localization Response
+     */
+    getStore: function(storeId) {
+      var localizationServiceUrl = this.host + this.service + '/' + storeId + '.jsonp' + '?show=metadata, localstore';
+      return repositoryService.get(localizationServiceUrl);
+    },
+
+    /**
+     * @function GetLocalStore
+     * @readOnly
+     * @description Call localization-service to get the local store closest to the user. <br>
+     * Localization-service uses different mechanisms to localize the user and responds with local store and workflow.
+     * 
+     * @param  {Position} position - Position, an optional, holds user consent lat, long, accuracy.
+     * @return {Promise<LocalizationResponse>} promise - Promise to resolve/reject Localization Response
+     */
+    getLocalStore: function(coordinates) {
+      var localizationServiceUrl = this.host + this.service + '.jsonp?' + (coordinates ? 'latitude=' + coordinates.latitude + '&longitude=' + coordinates.longitude + '&accuracy=' + coordinates.accuracy + '&' : '') + 'show=metadata, localstore';
+      return repositoryService.get(localizationServiceUrl);
+    },
+
+    /**
+     * @function GetMetadata
+     * @readOnly
+     * @description Call localization-service to get the metadata, Metadata helps to determine if user is internal/external.
+     * 
+     * @return {Promise<LocalizationResponse>} promise - Promise to resolve/reject localization Response
+     */
+    getMetadata: function() {
+      var localizationServiceUrl = this.host + this.service + '.jsonp?' + 'show=metadata';
+      return repositoryService.get(localizationServiceUrl);
+    }
+  };
+
+  return localizationServiceProxy;
+
+});
+/**
+ * @module StatusService
+ * @param  {object} root    window/node global
+ * @param  {function} factory status service factory
+ * @return {object}         Status service
+ */
+(function(root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define('statusService', ['repositoryService','localizationServiceProxy'], function(repositoryService, localizationServiceProxy) {
+      return factory(root, repositoryService, localizationServiceProxy);
+    });
+  } else {
+    root.StatusService = factory(root, repositoryService, localizationServiceProxy);
+  }
+})(this, function(root, repositoryService, localizationServiceProxy) {
+
+  /**
+   * @constant
+   * @type {Array}
+   */
+  var INTERNAL_USERS = ['KNOWN_LOCATION', 'THD_STORE_LOCATION', 'DEFAULT_INTERNAL'];
+
+  /**
+   * @constant
+   * @type {Array}
+   */
+  var EXTERNAL_USERS = ['LOC_HISTORY_BY_IP', 'LOC_HISTORY_BY_SUBNET', 'GEO_LOCATION', 'DEFAULT'];
+
+  /**
+   * @constant
+   * @type {Array}
+   */
+  var GPS_WORKFLOW = ['LOCALIZED_BY_GPS_HIGH', 'LOCALIZED_BY_GPS_MEDIUM', 'LOCALIZED_BY_GPS_LOW'];
+
+  var userService = {};
+
+  /**
+   * One year in milli seconds
+   * @type {long}
+   */
+  var oneYear = 365*24*60*60*1000;
+  var session = 0;
+  var page = -1;
+
+  /**
+   * @member
+   * @description A workflow is mapped to
+   *   - Category Eg: Self/Auto/Default localized.<br>
+   *   - Accuracy over other workflows.<br>
+   *   - Alias name used to store workflow in digital data.
+   * @type {WorkflowMapper}
+   */
+  var workflowMapper = {
+    // client workflow
+    LOCALIZED_BY_GPS_HIGH:    { category: '1', accuracy: 'HIGH',   alias: 'gps/html5/wi-fi|high'   },
+    LOCALIZED_BY_STORE:       { category: '0', accuracy: 'HIGH',   alias: 'IP-DB:Self Localized'   },
+    LOCALIZED_BY_FUZZY_STORE: { category: '0', accuracy: 'MEDIUM', alias: 'IP-DB:Self Localized'   },
+    LOCALIZED_BY_DEFAULT:     { category: '2', accuracy: 'LOW',    alias: 'Default'                },
+    LOCALIZED_BY_GPS_MEDIUM:  { category: '1', accuracy: 'MEDIUM', alias: 'gps/html5/wi-fi|med'    },
+    LOCALIZED_BY_GPS_LOW:     { category: '1', accuracy: 'LOW',    alias: 'gps/html5/wi-fi|low'    },
+    // service workflow
+    THD_STORE_LOCATION:       { category: '1', accuracy: 'HIGH',   alias: 'IP-DB:Store'            },
+    KNOWN_LOCATION:           { category: '1', accuracy: 'HIGH',   alias: 'IP-DB:Corporate'        },
+    LOC_HISTORY_BY_IP:        { category: '1', accuracy: 'MEDIUM', alias: 'IP-DB:History'          },
+    LOC_HISTORY_BY_SUBNET:    { category: '1', accuracy: 'LOW',    alias: 'IP-DB:Similar History'  },
+    GEO_LOCATION:             { category: '1', accuracy: 'MEDIUM', alias: 'IP-DB:Vendor'           },
+    DEFAULT_INTERNAL:         { category: '2', accuracy: 'LOW',    alias: 'IP-DB:Default Internal' },
+    DEFAULT:                  { category: '2', accuracy: 'LOW',    alias: 'Default'                }
+  }
+
+
+  userService.workflowMapper = workflowMapper;
+
+  var LOCALIZATION_VERSION_KEY = 'loc_version';
+  var LOCALIZATION_VERSION_VALUE = 1.0;
+
+  /**
+   * @member UserService.status
+   * @type {Object}
+   */
+  userService.status = {
+
+    /**
+     * @function isInternal
+     * @description Returns true if the user localized is Internal else false.
+     * Checks if workflow is known_loc/store_loc/customer_reps(default-internal) or
+     * THD_INTERNAL cookie for 1.
+     * @param  {String}  workflow - workflow, an Optional
+     * @return {Boolean}  True if Internal else false
+     */
+    isInternal: function(workflow) {
+      var workflow = userService.status.getWorkflow();
+      return (workflow && INTERNAL_USERS.indexOf(workflow) !== -1)
+        || repositoryService.get('THD_INTERNAL', workflow) === '1';
+    },
+
+    /**
+     * @function isInternalAsync
+     * @description This is async version of isInternal()
+     * Invokes localization service to determine if user is internal or not.
+     * Resolves a promise wrapping true if user is internal else rejects promise wrapping false.
+     * @example
+     * if(Localizer.status.isUnknownUser()) {
+     *   Localizer.status.isInternalAsync().then(function(){
+     *     // business logic
+     *   })
+     * }
+     *
+     * @return {Promise} Promise wrapping a boolean value.
+     */
+    isInternalAsync: function() {
+      return new Promise(function(resolve, reject) {
+        localizationServiceProxy.getMetadata().then(function(response) {
+          if(INTERNAL_USERS.indexOf(response.metadata.workflow) !== -1) {
+            userService.operations.markAsInternalUser();
+            resolve(true);
+          } else {
+            userService.operations.markAsExternalUser();
+            reject(false);
+          }
+        }, function(error) {
+          reject(false);
+        });
+      });
+    },
+
+    /**
+     * @function isExternal
+     * @description Returns true if the user localized is External else false.
+     * Checks if workflow is loc_history_ip/loc_history_subnet/geo-location/default or
+     * THD_INTERNAL cookie for 0.
+     * @param  {String}  [workflow] - localization workflow
+     * @return {Boolean}  True if External else false
+     */
+    isExternal: function(workflow) {
+      workflow = workflow || userService.status.getWorkflow();
+      return (workflow && EXTERNAL_USERS.indexOf(workflow) !== -1)
+        || repositoryService.get('THD_INTERNAL', workflow) === '0';
+    },
+
+    /**
+     * @function isSelfLocalized
+     * @description Returns true if the user self_localized/localized_by_store. Checks THD_FORCE_LOC for 0
+     * @return {Boolean} True if user self localized else false.
+     */
+    isSelfLocalized: function() {
+      var workflow = userService.status.getWorkflow();
+      var thdForceLoc = repositoryService.get('THD_FORCE_LOC', workflow);
+      return thdForceLoc === '0';
+    },
+
+    /**
+     * @function isAutoLocalized
+     * @description Returns true if the user auto_localized. Checks THD_FORCE_LOC for 1
+     * @return {Boolean} True if user auto localized else false.
+     */
+    isAutoLocalized: function() {
+      var workflow = userService.status.getWorkflow();
+      var thdForceLoc = repositoryService.get('THD_FORCE_LOC', workflow);
+      return thdForceLoc === '1';
+    },
+
+    /**
+     * @function isDefaultLocalized
+     * @description Returns true if the user default_localized. Checks THD_FORCE_LOC for 2
+     * @return {Boolean} True if user default localized else false.
+     */
+    isDefaultLocalized: function() {
+      var workflow = userService.status.getWorkflow();
+      var thdForceLoc = repositoryService.get('THD_FORCE_LOC', workflow);
+      return thdForceLoc === '2' || thdForceLoc === '';
+    },
+
+    /**
+     * @function isUnknownUser
+     * @description Returns true if the user neither internal nor external. Checks THD_INTERNAL is undefined or doesn't exist.
+     * @return {Boolean} True if user default localized else false.
+     */
+    isUnknownUser: function() {
+      var workflow = userService.status.getWorkflow();
+      var value = repositoryService.get('THD_INTERNAL', workflow);
+      return value === undefined;
+    },
+
+    /**
+     * @function isLocalized
+     * @description Returns true if user is localized.
+     * Following values are verified before deciding on whether user is localized or not.
+     * 1. THD_LOC_STORE cookie should be set
+     * 2. THD_FORCE_LOC cookie should be set either 0 or 1
+     * 3. THD_INTERNAL cookie should be set to either 0 or 1
+     *
+     * @return {Boolean} Returns true if user is localized else false.
+     */
+    isLocalized: function() {
+      var workflow = userService.status.getWorkflow();
+      var localStoreExists = repositoryService.get('THD_LOCSTORE', workflow) ? true : false
+      return workflow && localStoreExists &&
+      (this.isSelfLocalized() || this.isAutoLocalized() || this.isDefaultLocalized());
+    },
+
+    /**
+     * @function isNotLocalized
+     * @description Checks if the user is localized or not.
+     * @see isLocalized
+     * @return {Boolean} Returns true if user is not localized.
+     */
+    isNotLocalized: function() {
+      return !this.isLocalized();
+    },
+
+    /**
+     * @function isUserInStore
+     * @description Returns true if user is accessing hd.com from store location else false
+     * @todo Definition of InStore user might extend post geo-fencing implementation.
+     * @return {Boolean} Returns true if user is in one of the HD stores
+     */
+    isUserInStore: function() {
+      // supporting THD_INSTORE as is it set by Autlocalizer in header. Should be removed in future.
+      // checking two source is not good !
+      return this.getWorkflow() === 'THD_STORE_LOCATION'
+      || repositoryService.get('THD_INSTORE') === 'TRUE';
+    },
+
+    /**
+     * @function isUserInStoreAsync
+     * @description This is async version of isUserInStore()
+     * Resolves a promise wrapping true if user is accessing hd.com from store location else
+     * a rejects a promise wrapping false
+     * @example
+     * if(Localizer.status.isSelfLocalized()) {
+     *   Localizer.status.isUserInStore().then(function(){
+     *     // business logic
+     *   })
+     * }
+     * @return {Promise} Returns Promise wrapping true if user is in one of the HD stores
+     */
+    isUserInStoreAsync: function() {
+      return new Promise(function(resolve, reject) {
+        localizationServiceProxy.getMetadata().then(function(response) {
+          if('THD_STORE_LOCATION' === response.metadata.workflow) {
+            resolve(true);
+          } else {
+            reject(false);
+          }
+        }, function(error) {
+          reject(false);
+        });
+      });
+    },
+
+    /**
+     * @function getAccuracy
+     * @description Returns the accuracy of the localization mode.<br>
+     * 1. If user is self localized then localization mode is treated as HIGH accuracy.<br>
+     * 2. If user is auto localized then localization mode is treated as HIGH, MEDIUM, LOW accuracy.<br>
+     * 3. If user is default localized then localization mode is treated as LOW accuracy
+     * @see workflowMapper
+     * @return {string} Returns HIGH|MEDIUM|LOW accuracy of the current localization mode.
+     */
+    getAccuracy: function() {
+      var workflow = repositoryService.get('WORKFLOW');
+      return workflow && workflowMapper[workflow].accuracy;
+    },
+
+    /**
+     * @function getWorkflow
+     * @description Returns the workflow by which localization was resolved.
+     * @return {string} Returns workflow
+     */
+    getWorkflow: function() {
+      return repositoryService.get('WORKFLOW');
+    },
+
+    /**
+     * @function getGpsStatus
+     * @description Reads GPS_STATUS from storage.
+     * @return {string} Returns GPS status Eg: gps access granted, gps access denied, gps timeout
+     */
+    getGpsStatus : function() {
+      return repositoryService.get('GPS_STATUS');
+    },
+
+    /**
+     * @function getLocalizationMethod
+     * @description Returns an alias to the workflow. This is api intended for analytics
+     * @return {string} Returns an alias to workflow.
+     */
+    getLocalizationMethod: function() {
+      var workflow =  this.getWorkflow();
+      return workflow ? workflowMapper[workflow].alias : '';
+    },
+
+    /**
+     * @function getLegacyLocalizationMethod
+     * @description This method is relevant only until the migration is completed.
+     * This method will be removed once all consumers have migrated to new localizer.
+     * ** DO NOT USE THIS METHOD ***
+     * @return {string} Returns localization method
+     */
+    __getLegacyLocalizationMethod: function() {
+      return repositoryService.get('localizationMethod');
+    },
+
+    /**
+     * @deprecated This method shouldn't be used. This method most likely is not necessary.
+     * Will be removed in future once all client consumes this standardized localizer.
+     * @function isRunningUpdatedVersion
+     * @description Checks if the client is running on latest version localization_version.
+     * @return {boolean} Returns true if loc_version is less than or equal to localizatization version.
+     */
+    __isRunningUpdatedVersion : function() {
+      var currentVersion = repositoryService.get(LOCALIZATION_VERSION_KEY);
+      return userService.status.isInternal() && currentVersion !== null && currentVersion
+            && Number(currentVersion) >= LOCALIZATION_VERSION_VALUE;
+    }
+  }
+
+  /**
+   * @member UserService.operations
+   * @description User Service with methods to perform write operation.
+   * @type {Object}
+   */
+  userService.operations = {
+
+    /**
+     * @function markAsInternalUser
+     * @description Marks user as internal by setting THD_INTERNAL cookie to 1
+     */
+    markAsInternalUser: function() {
+      var workflow = userService.status.getWorkflow();
+      repositoryService.put('THD_INTERNAL', 1, workflow);
+    },
+
+    /**
+     * @function markAsExternalUser
+     * @description Marks user as external by setting THD_INTERNAL cookie to 0
+     */
+    markAsExternalUser: function() {
+      var workflow = userService.status.getWorkflow();
+      repositoryService.put('THD_INTERNAL', 0, workflow);
+    },
+
+    /**
+     * @function setLocalizationMode
+     * @description Sets the localization mode as Self/Auto/Default by setting THD_FORCE_LOC to either 0,1,2
+     * @param {string} workflow workflow as returned by localization-service or client workflow.
+     */
+    setLocalizationMode: function(workflow) {
+      this.setWorkflow(workflow);
+      repositoryService.put('THD_FORCE_LOC', workflowMapper[workflow].category, workflow);
+    },
+
+    /**
+     * @function setWorkflow
+     * @description Persists the workflow in the storage.
+     * @param {string} workflow - workflow to be persisted
+     */
+    setWorkflow: function(workflow) {
+      repositoryService.put('WORKFLOW', workflow);
+
+      /**
+       * SHOULD BE REMOVED IN FUTURE
+       * Persisting WORKFLOW in local storage too.
+       */
+      repositoryService.storageStrategy['local'].put('WORKFLOW', workflow, 365*24*60*60*1000);
+    },
+
+    /**
+     * @function setGpsStatus
+     * @description Persist gps status in storage
+     * @param {string} gpsStatus GPS status Eg: gps access granted, gps access denied, gps timeout
+     */
+    setGpsStatus: function(gpsStatus) {
+      repositoryService.put('GPS_STATUS', gpsStatus);
+    },
+
+    /**
+     * @function markAsInStoreUser
+     * @description Marks the user as in-store user.
+     * @param  {string} workflow localization workflow
+     */
+    markAsInStoreUser: function(workflow) {
+      if(workflow === 'THD_STORE_LOCATION') {
+        // In the current system, THD_INSTORE cookie is set by AutoLocalizer service in header.
+        repositoryService.put('THD_INSTORE', 'TRUE');
+      }
+    },
+
+    /**
+     * @function updateLocalizerVersion
+     * @description Updates the localization version and persists in the storage.
+     * This version helps to force run localization for internal users when there are changes
+     * to localizer.
+     */
+    updateLocalizationVersion: function() {
+      repositoryService.put(LOCALIZATION_VERSION_KEY, LOCALIZATION_VERSION_VALUE);
+    },
+
+    /**
+     * @function markAsCanadianUser
+     * @description If the user accesses HD.com from canada marks those users as canadian users
+     * by setting CA_USER cookie
+     */
+    markAsCanadianUser: function() {
+      repositoryService.put('THD_CA_USER', 1);
+      repositoryService.put('THD_AUTOLOCINTERCEPT', 1);
+    }
+  }
+
+  return userService;
+
+});
+
+(function(root, factory) {
+	if (typeof define === 'function' && define.amd) {
+		define('storeService', ['repositoryService','statusService'], function(repositoryService, userService) {
+			return factory(root, repositoryService, userService);
+		});
+	} else {
+		 root.StoreService = factory(root, repositoryService, userService);
+	}
+})(this, function(root, repositoryService, userService) {
+
+	/**
+	 * @constant
+	 * @type {String}
+	 */
+	var storeStorageKey = 'THD_LOCSTORE';
+
+	/**
+	 * @member
+	 * @description Default store #121 details
+	 * @type {object}
+	 */
+	var defaultStore =  {
+        storeId: '121',
+        name: 'Cumberland',
+        address: {
+          postalCode: '30339',
+          county: 'Cobb',
+          state: 'GA',
+          country: 'US',
+          city: 'Atlanta',
+          street: '2450 Cumberland Pkwy'
+        },
+        storeHours: {
+          monday: { open: '6:00', close: '21:00' },
+          tuesday: { open: '6:00', close: '21:00' },
+          wednesday: { open: '6:00', close: '21:00' },
+          thursday: { open: '6:00', close: '21:00' },
+          friday: { open: '6:00', close: '21:00' },
+          saturday: { open: '6:00', close: '21:00' },
+          sunday: { open: '8:00', close: '19:00' }
+        }
+      };
+
+  var days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+	var mapStoreHoursToString = function(storeHours) {
+		var storeHoursInString = days.map(function(day, index) {
+			return (index + 1) + ';' + storeHours[day].open + '-' + storeHours[day].close;
+		}).reduce(function(concatenatedStoreHours, storeHours) {
+			return concatenatedStoreHours ? (concatenatedStoreHours + ';' + storeHours) : storeHours;
+		});
+		return storeHoursInString;
+	};
+
+	var mapStringToStoreHours = function(storeHoursInString) {
+		var storeHours = {};
+		storeHoursInString
+					.split(';')
+					.filter(function(value, index) {
+						return index %2 !== 0;
+					}).map(function(openCloseHours) {
+						var hours = openCloseHours.split('-');
+						return {
+							'open': hours[0], 'close' : hours[1]
+						}
+					}).forEach(function(openCloseHours, index) {
+						var day = days[index];
+						storeHours[day] = openCloseHours;
+					});
+		return storeHours;
+	};
+
+  /**
+   * @module StoreService
+   * @description Provides methods to get/set/remove store details in json format.
+   * @type {Object}
+   */
+	var storeService = {
+
+		/**
+		 * @function GetDefaultStore
+		 * @description Returns the default store details #121
+		 * @return {object} Returns the default store #121
+		 */
+		getDefaultStore: function() {
+			return defaultStore;
+		},
+
+		/**
+		 * @function SetDefaultStore
+		 * @description Persists default store #121
+		 */
+		setDefaultStore: function() {
+			this.setStore(defaultStore);
+		},
+
+		/**
+		 * @function SetStore
+		 * @description Converts the subset of store information(json) to string format and
+		 * persists in storage.
+		 * @param {object} store - store to be persisted.
+		 * @param {string} storageStrategy Optional parameter allows consumer to specify the storage method.
+		 */
+		setStore: function(store) {
+			var workflow = userService.status.getWorkflow();
+			var fixedStoreId = store.storeId.replace(/^0/, '');
+
+			var storeDetails = JSON.stringify({
+				storeId: fixedStoreId,
+				name: store.name,
+				street: store.address && store.address.street,
+				city: store.address && store.address.city,
+				state: store.address && store.address.state,
+				zipcode: store.address && store.address.postalCode
+			});
+			var oneYearInMilliSeconds = 365*24*60*60*1000;
+			// will be stored in C4. Hence the below transormation.
+			storeDetails = fixedStoreId + '+' + store.name + ' - ' + store.address.city + ', ' + store.address.state + '+',
+			repositoryService.put(storeStorageKey, storeDetails, workflow);
+			// Store hours and zip code added to support migration.
+			// These two cookies should be removed in future.
+			repositoryService.put('THD_STRFINDERZIP', store.address.postalCode);
+			var storeHoursInString = mapStoreHoursToString(store.storeHours);
+			repositoryService.put('THD_STORE_HOURS', storeHoursInString);
+			// if store user self localizes to different store, update store_info expiration
+			if(userService.status.isUserInStore()) {
+				if(userService.status.isSelfLocalized()) {
+						var existingStoreDetails = repositoryService.get('THD_STORE_INFO');
+						repositoryService.put('THD_STORE_INFO', existingStoreDetails, workflow); // same store, update expiration
+				} else if(userService.status.isAutoLocalized()) {
+						repositoryService.put('THD_STORE_INFO', storeDetails, workflow);
+				}
+			}
+		},
+
+		/**
+		 * @function GetStore
+		 * @description Reads the store details from storage, Parses to JSON.
+		 * @param {string} storageStrategy Optional parameter allows consumer to specify the storage method.
+		 * @return {object} Returns the store
+		 */
+		getStore: function(workflow) {
+			var workflow = userService.status.getWorkflow();
+			var store = workflow && repositoryService.get(storeStorageKey, workflow);
+			var zipCode = repositoryService.get('THD_STRFINDERZIP');
+			var storeHours = repositoryService.get('THD_STORE_HOURS');
+			storeHours = storeHours && mapStringToStoreHours(storeHours);
+
+			if(store) {
+				var storeDetails = store.split('+');
+
+				try {
+					var storeNameAndCityState = storeDetails[1];
+					var dashCount = storeNameAndCityState.split('-').length - 1;
+
+					if (dashCount === 1) {
+						return {
+							storeId: storeDetails[0],
+							name: storeDetails[1].split('-')[0].trim(),
+							city: storeDetails[1].split('-')[1].split(',')[0].trim(),
+							state: storeDetails[1].split('-')[1].split(',')[1].trim(),
+							zipcode: zipCode,
+							storeHours: storeHours
+						}
+					} else {
+						var lastIndexOf = storeNameAndCityState.lastIndexOf(' - ');
+						var name = storeNameAndCityState.substr(0, lastIndexOf);
+						var cityState = storeNameAndCityState.substr(lastIndexOf + 3); // Add 3 because of lengt of " - "
+
+						return {
+							storeId: storeDetails[0],
+							name: name,
+							city: cityState.split(',')[0].trim(),
+							state: cityState.split(',')[1].trim(),
+							zipcode: zipCode,
+							storeHours: storeHours
+						}
+					}
+				} catch (ex) {
+						// *** Remove this catch block post migration ***
+						// unfortunately my account persists store details in different format.
+						// Ideally my account shouldn't really update store details. This shouldn't happen post migration.
+						// Ex: 6553+Howard Lane+-+Austin,+TX+ (Incorrect format)
+						return {
+							storeId: storeDetails[0],
+							name: storeDetails[1].trim(),
+							city: storeDetails[3].split(',')[0].trim(),
+							state: storeDetails[4],
+							zipcode: zipCode,
+							storeHours: storeHours
+						}
+				}
+			}
+
+			return store;
+		},
+
+		 /**
+     * @function getUserStore
+     * @description If HD is accessed from one of the store location, this method returns the store
+     * from where the user has accessed HD.com
+     * @return {object} Store details
+     */
+		getUserStore: function() {
+			var store = repositoryService.get('THD_STORE_INFO');
+			if(!store) {
+				return undefined;
+			}
+			var storeDetails = store.split('+');
+			return {
+				storeId: storeDetails[0],
+				name: storeDetails[1].split('-')[0].trim(),
+				city: storeDetails[1].split('-')[1].split(',')[0].trim(),
+				state: storeDetails[1].split('-')[1].split(',')[1].trim()
+			}
+		},
+
+		/**
+		 * @function RemoveStore
+		 * @description Removes the store details from the storage.
+		 * @param {string} storageStrategy Optional parameter allows consumer to specify the storage method.
+		 * @return {boolean} true if store details successfully removed else false.
+		 */
+		removeStore: function() {
+			var workflow = userService.status.getWorkflow();
+			repositoryService.remove(storeStorageKey, workflow);
+		}
+	}
+
+	return storeService;
+});
+

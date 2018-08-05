@@ -1,0 +1,93 @@
+/* globals define */
+/*
+  Purpose: Handles pushing updates to analytics
+*/
+
+(function closure(root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define('header.analytics', ['jquery', 'digitalData', 'Localizer'],
+      function load($, digitalData, Localizer) {
+        return factory(root, $, digitalData, Localizer);
+      });
+  } else {
+    // For non-AMD module, expose this to global (will also be useful for test cases)
+    /*eslint-disable*/
+    var _hfapp = THD.Utility.Namespace.createNamespace('THD.HFApp');
+    _hfapp.analytics = factory(root, jQuery, window.digitalData, Localizer);
+    /*eslint-enable*/
+  }
+})(this, function factory(root, $, digitalData, Localizer) {
+  /*
+   * Private data
+   */
+  var module = {};
+  var privateMethods = {};
+
+  /*
+   * Private Methods
+   */
+
+  privateMethods.createStashEventObject = function _createStashEventObject(type, detail) {
+    return {
+      eventMode: 'stash',
+      category: {
+        primaryCategory: 'stash'
+      },
+      eventInfo: {
+        eventName: type.toLowerCase()
+      },
+      stash: {
+        clickInfo: detail.toLowerCase()
+      }
+    };
+  };
+
+  privateMethods.pushEvent = function _pushEvent(eventObject) {
+    if (!module.loaded) {
+      throw new Error('header.analytics must be initialized before it can be used.');
+    }
+
+    // Push this thing in via the API when its loaded
+    return module.loaded.then(function _pushEventWhenLoaded() {
+      module.digitalDataApi.event.push(eventObject);
+    });
+  };
+
+  /*
+   * Public Methods
+   */
+
+  module.getPrivateMethods = function getPrivateMethods() {
+    console.warn('getPrivateMethods should only be used for testing purposes');
+    return privateMethods;
+  };
+
+  module.logEvent = function _logEvent(type, details) {
+    var eventObject = privateMethods.createStashEventObject(type, details);
+
+    return privateMethods.pushEvent(eventObject);
+  };
+
+  module.logEventObject = function _logEvent(eventObject) {
+    return privateMethods.pushEvent(eventObject);
+  };
+
+  module.init = function _init() {
+    var loadedDefer;
+
+    if (!module.loaded) {
+      loadedDefer = $.Deferred();
+      module.loaded = loadedDefer.promise();
+
+      Localizer.localize().then(function _getApiWhenLoaded() {
+        module.digitalDataApi = digitalData.get();
+        loadedDefer.resolve();
+      });
+    }
+
+    return module.loaded;
+  };
+
+  return module;
+});
+

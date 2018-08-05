@@ -1,0 +1,1 @@
+define(["jquery","global.namespace","credit-center"],function(e,n,i){return{init:function(){i.init(),e("#ManagePrivacy").length&&require(["thd-privacy-settings"],function(e){e.init()}),"undefined"!=typeof DIGITAL_EMITTER&&DIGITAL_EMITTER.trigger("jquery-ready")}}});

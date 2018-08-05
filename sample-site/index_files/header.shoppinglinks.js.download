@@ -1,0 +1,92 @@
+/* globals define */
+(function closure(root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define('header.shoppinglinks', ['jquery', 'header.analytics', 'hoverIntent'],
+      function load(jQuery, headerAnalytics) {
+        return factory(root, jQuery, headerAnalytics);
+      });
+  } else {
+    // For non-AMD module, expose this to global (will also be useful for test cases)
+    /*eslint-disable*/
+    var _hfapp = THD.Utility.Namespace.createNamespace('THD.HFApp');
+    _hfapp.ShoppingLinks = factory(root, jQuery, THD.HFApp.analytics, Mustache, $.hoverIntent);
+    /*eslint-enable*/
+  }
+})(this, function factory(root, $, headerAnalytics) {
+  var shoppingLinks = {};
+  var privateMethods = {};
+
+  var config = {
+    shoppingLinkSelector: '.ShoppingLinks__link',
+    linkOpenClass: 'ShoppingLinks__link--open',
+    linkClosingClass: 'ShoppingLinks__link--closing',
+    closingTimeout: 300
+  };
+
+  /*
+   * Private Methods
+   */
+  privateMethods.triggerHoverintent = function _triggerHoverintent() {
+    $(this).trigger({
+      type: 'hoverintent',
+      target: this
+    });
+  };
+
+  // probably none of this is necessary any more, but animation changed during development
+  privateMethods.attachShoppingLinkEvents = function _attachShoppingLinkEvents() {
+    var timeout;
+    var $this = $(this);
+
+    $this.on('mouseenter', function _shoppingLinkMouseEnter() {
+      $this.addClass(config.linkOpenClass);
+      $this.removeClass(config.linkClosingClass);
+
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    });
+
+    $this.on('mouseleave', function _shoppingLinkMouseLeave() {
+      $this.removeClass(config.linkOpenClass);
+      $this.addClass(config.linkClosingClass);
+
+      timeout = setTimeout(function _shoppingLinkTimeout() {
+        $this.removeClass(config.linkClosingClass);
+        $this.removeClass(config.linkOpenClass);
+      }, config.closingTimeout);
+    });
+  };
+
+  privateMethods.logInteraction = function _logInteraction() {
+    var $element =  $(this).closest('a');
+    var text = $element.text().toLowerCase();
+    if(!$element.hasClass('js__flyout--open')) {
+    	return headerAnalytics.logEvent('header click', ['header', 'shopping links', text].join('>'));
+    }
+  };
+
+  /*
+   * Public Methods
+   */
+  shoppingLinks.getPrivateMethods = function _getPrivateMethods() {
+    return privateMethods;
+  };
+
+  shoppingLinks.init = function _init() {
+    // Patch for hoverintent listening
+    $(document)
+      .on('click touchend', config.shoppingLinkSelector, privateMethods.logInteraction)
+      .hoverIntent({
+        selector: config.shoppingLinkSelector,
+        over: privateMethods.triggerHoverintent,
+        out: $.noop
+      });
+
+    // This should be converted to simple hover state - no need for JS any more
+    $(config.shoppingLinkSelector).each(privateMethods.attachShoppingLinkEvents);
+  };
+
+  return shoppingLinks;
+});
+

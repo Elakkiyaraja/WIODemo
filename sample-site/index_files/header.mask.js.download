@@ -1,0 +1,91 @@
+/* globals define */
+/*
+  Purpose:
+    - UI controller for the flyout on the L1 navigation list.
+
+  Dependencies
+    - Mustache
+    - jQuery
+    - Hoverintent
+    - THD Namespace
+*/
+
+(function closure(root, factory) {
+  if(typeof define === 'function' && define.amd) {
+    define('header.mask', ['jquery'],
+      function load(jQuery) {
+        return factory(root, jQuery);
+      });
+  } else {
+    // For non-AMD module, expose this to global (will also be useful for test cases)
+    /*eslint-disable*/
+    var _hfapp = THD.Utility.Namespace.createNamespace('THD.HFApp');
+    _hfapp.mask = factory(root, jQuery);
+    /*eslint-enable*/
+  }
+})(this, function factory(root, $) {
+  var mask = {};
+  var privateMethods = {};
+
+  /*
+   * Private Methods
+   */
+  privateMethods.triggerHoverintent = function _triggerHoverintent() {
+    $(this).trigger({
+      type: 'hoverintent',
+      target: this
+    });
+    $(document).trigger('showSimpleFlyout', false);
+  };
+
+  privateMethods.get = function _getMask() {
+    var $mask = $('.Mask');
+
+    if (!$mask.length) {
+      $mask = $('<div></div>')
+        .addClass('Mask')
+        .appendTo('body');
+
+      $mask.hoverIntent({
+        over: privateMethods.triggerHoverintent,
+        out: $.noop
+      });
+
+      $mask.on('click touchend', function(){
+         $(document).trigger('showSimpleFlyout', false);
+      })
+    }
+
+    return $mask;
+  };
+
+  // destroys the flyout and highlights
+  mask.destroy = function _destroyMask() {
+    $('.Mask').off().remove();
+  };
+
+  mask.show = function _showMask(event, open) {
+    var maskShown = (typeof open === 'undefined') ? true : open;
+
+    privateMethods.get().toggleClass('Mask--open', maskShown);
+  };
+
+  mask.on = function _on() {
+    var args = Array.prototype.slice.call(arguments);
+    privateMethods.get().on.apply(mask.on, args);
+  };
+
+  mask.off = function _off() {
+    var args = Array.prototype.slice.call(arguments);
+    privateMethods.get().off.apply(mask.off, args);
+  };
+
+  mask.getPrivateMethods = function getPrivateMethods() {
+    return privateMethods;
+  };
+
+  $(document).on('headerMask-show', mask.show);
+
+  return mask;
+});
+

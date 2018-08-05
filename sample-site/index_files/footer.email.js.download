@@ -1,0 +1,110 @@
+/*
+	Dependencies
+		- jquery
+		- THD Namespace
+*/
+(function closure(root, factory) {
+	/* istanbul ignore else  */
+	if(typeof define === 'function' && define.amd) {
+		define('footer.email', ['jquery', 'global.namespace', 'global.utility', 'thd-overlay', 'Localizer'],
+			function load(jQuery, THD, globalUtility, thdOverlay, Localizer) {
+				return factory(root, jQuery, THD, globalUtility, thdOverlay, Localizer);
+			});
+	} else{
+		/* eslint-disable*/
+		// For non-AMD module, expose this to global (will also be useful for test cases)
+		var _hfapp = THD.Utility.Namespace.createNamespace('THD.HFApp');
+		_hfapp.email = factory(root, jQuery, THD, THD.Utility.Config, THD.Global.overlayConfigs, Localizer);
+		/* eslint-enable*/
+	}
+})(this, function factory(root, $, THD, globalUtility, thdOverlay, Localizer) {
+	var email = {};
+	var privateMethods = {};
+	// Private Methods
+
+	// replace this common validation function with one in utils at some point
+	privateMethods.check = function check(emailAddress) {
+		var re = /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
+		return re.test(emailAddress);
+	};
+
+	// show/hde the inline error
+	privateMethods.toggleError = function toggleError(show) {
+		$('#newsletterEmailError')
+			.toggleClass('u--show', show)
+			.siblings('.footerEmailSignup__controlGroup').toggleClass('footerEmailSignup__controlGroup--error', show);
+		return privateMethods;
+	};
+
+	// sends the email to a fancybox modal with the email in the URL
+	privateMethods.sendEmail = function sendEmail(emailAddress) {
+		// @TODO remove references to global.modal
+	  var theHref = 'https://' + globalUtility.getHostNameSecure() + '/customer/account/v1/guest/preferences?email=' + emailAddress + '&zipCode=' + Localizer.getLocalizedStore().zipcode;
+    $.ajax({
+      url: theHref,
+      type: 'PUT',
+      data: '{"preferences": {"preference": [{"isSubscribed": true,"code": "PROMOTIONS"}]}}',
+      headers: {"content-type": "application/json", "channelId": "1"},
+      success: function(response) {
+        if (response.preferences.status === 'SUCCESS') {
+          privateMethods.populateContent('Thank you for signing up.' + '</br>' + 'Your first email should arrive shortly.');
+        }
+      },
+      error: function(response) {
+        var errorMsg ;
+        if (response.responseJSON.preferences.errors.length !== '0') {
+          privateMethods.populateContent('We apologize, due to system error, we were ' + '</br>' + 'unable to add your email.' + '</br>' + 'Please try again later.');
+        }
+     }
+    })
+
+		return privateMethods;
+	};
+
+  privateMethods.populateContent = function populateContent(data) {
+    var emailOverlayContent = document.createElement('div');
+    emailOverlayContent.innerHTML = '<div class="footerEmailSignup__signUpMessage--box">' +
+                                        '<div class = "footerEmailSignup__signUpMessage--text">' + data + '</div></div>';
+    var overlayObj = new thdOverlay({
+      speed: '500ms',
+      channel: 'desktop',
+      useContent: true,
+      header: false,
+      closeButton: true,
+      title: '',
+      htmlNode: emailOverlayContent
+    });
+    overlayObj.open();
+  }
+
+	// controller
+	privateMethods.validate = function validate(e) {
+		var $this = $(this);
+		var emailAddress = $this.find('input[type=email]').val();
+		var isValid = privateMethods.check(emailAddress);
+
+		e.preventDefault();
+
+		if (isValid) {
+			privateMethods
+				.toggleError(false)
+				.sendEmail(emailAddress, $, root);
+
+			$this.find('input[type=email]').val('');
+		} else {
+			privateMethods.toggleError(true);
+		}
+	};
+
+
+	email.init = function init() {
+		$(document).on('submit', '#footerEmailSignup', privateMethods.validate);
+		return this;
+	};
+
+	email.getPrivateMethods = function getPrivateMethods() {
+		return privateMethods;
+	};
+
+	return email;
+});

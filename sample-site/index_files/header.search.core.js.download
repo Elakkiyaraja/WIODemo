@@ -1,0 +1,126 @@
+/* globals define */
+/*
+  Purpose:
+    - Simple UI controller for the expansion and contraction of the search field
+
+  Dependencies:
+    - jQuery
+    - THD Namespace
+*/
+
+(function closure(root, factory) {
+  /* istanbul ignore else  */
+  if (typeof define === 'function' && define.amd) {
+    define('header.search.core', ['jquery', 'global.namespace'], function load(jQuery, THD) {
+      return factory(root, jQuery, THD);
+    });
+  } else {
+    // For non-AMD module, expose this to global (will also be useful for test cases)
+    /* eslint-disable*/
+    var _hfapp = THD.Utility.Namespace.createNamespace('THD.HFApp');
+    _hfapp.search = factory(root, jQuery, THD.Global.TypeAhead);
+    /* eslint-enable*/
+  }
+})(this, function factory(root, $, THD) {
+  var search = {};
+  var privateMethods = {};
+
+  var config = {
+    focusDelaySpeed: 300
+  };
+
+  privateMethods.setExpanderState = function _setExpanderState(open) {
+    var $header = $('.Header3');
+    var $searchBox = $('.SearchBox');
+
+    // collapse both, then collapse the 1st left
+    $header.find('.Header3__collapser')
+      .toggleClass('Header3__collapser--collapse', open)
+      .eq(0)
+        .toggleClass('Header3__collapser--collapse-left', open);
+
+    $header.find('.Header3__expander')
+      .toggleClass('Header3__expander--expand', open);
+
+    $searchBox.find('.SearchBox__options')
+      .toggleClass('SearchBox__options--open', open);
+
+  };
+
+  // TODO dead code?
+  /* istanbul ignore next  */
+  privateMethods.setSearchBarState = function _setSearchBarState(open) {
+    var $searchBar = $('.SearchBox__searchBar');
+
+    $searchBar.toggleClass('SearchBox__searchBar--focus', open);
+
+    $searchBar.find('.SearchBox__cover')
+      .toggleClass('SearchBox__cover--closed', open);
+
+    $searchBar.find('.SearchBox__input')
+      .toggleClass('SearchBox__input--open', open);
+
+    $searchBar.find('.SearchBox__button')
+      .toggleClass('SearchBox__button--open', open);
+  };
+
+  privateMethods.setSearchState = function _setSearchState(open) {
+    privateMethods.setExpanderState(open);
+    $(document).trigger('searchState', open);
+  };
+
+  privateMethods.isFocus = function _isFocus() {
+    var $searchBox = $('.SearchBox');
+    var $searchInput = $searchBox.find('.SearchBox__input');
+    var $searchButton = $searchBox.find('.SearchBox__button');
+    var focusOnSearch = ($searchInput.is(':focus') || $searchButton.is(':focus'));
+
+    return focusOnSearch;
+  };
+
+  privateMethods.focusOnSearch = function _focusOnSearch() {
+    if (!privateMethods.isFocus()) {
+      $('.SearchBox .SearchBox__input').focus();
+    }
+  };
+
+  search.openSearch = function _openSearch(/* event */) {
+    // event.preventDefault();
+
+    privateMethods.setSearchState(true);
+
+    // privateMethods.focusOnSearch();
+    setTimeout(privateMethods.focusOnSearch, config.focusDelaySpeed);
+  };
+
+
+  search.closeSearch = function _closeSearch() {
+    var closeCover = !($('.SearchBox__input').val() || privateMethods.isFocus());
+
+    if (closeCover) {
+      privateMethods.setSearchState(false);
+    }
+  };
+
+  search.clearSearchField = function _clearSearchField(event) {
+    event.preventDefault();
+    $('.SearchBox__input').val('').blur();
+    $(document).trigger('clearSearchField');
+    search.closeSearch();
+  };
+
+  // To validate if the user is already focused on searchbar
+  search.checkSearchFocus = function _checkSearchFocus() {
+	  var isSearchFocused = $('.SearchBox__input').is(':focus');
+
+	  if (isSearchFocused) {
+	      search.openSearch();
+	  }
+  };
+
+  search.getPrivateMethods = function getPrivateMethods() {
+    return privateMethods;
+  };
+
+  return search;
+});

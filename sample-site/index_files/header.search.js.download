@@ -1,0 +1,60 @@
+/* globals define */
+/*
+  Purpose:
+    - Simple UI controller for the expansion and contraction of the search field
+
+  Dependencies:
+    - jQuery
+    - THD Namespace
+*/
+
+(function closure(root, factory) {
+  /* istanbul ignore else  */
+  if (typeof define === 'function' && define.amd) {
+    define('header.search', ['jquery', 'global.namespace', 'thd.search', 'header.search.core', 'typeAheadV2'], function load(jQuery, THD, thdSearch, headerSearchCore, typeAhead) {
+      return factory(root, jQuery, THD, thdSearch, headerSearchCore, typeAhead);
+    });
+  } else {
+    // For non-AMD module, expose this to global (will also be useful for test cases)
+    /* eslint-disable*/
+    var _hfapp = THD.Utility.Namespace.createNamespace('THD.HFApp');
+    _hfapp.search = factory(root, jQuery, THD.Global.TypeAhead, THD.Search, headerSearchCore, typeAhead);
+    /* eslint-enable*/
+  }
+})(this, function factory(root, $, THD, thdSearch, headerSearchCore, typeAhead) {
+  var search = {};
+
+  search.init = function init() {
+	$('form#headerSearchForm').attr('onsubmit', '');
+    var $typeAheadInput = $('#headerSearch');
+    var $typeAheadContainer = $('#typeAheadContainer');
+    var $historyContainer = $('#searchHistory');
+    // if user is already focused on search then activate searchbox
+    headerSearchCore.checkSearchFocus();
+
+      // Set the input field and container to populate
+      typeAhead.initialize($typeAheadInput, {
+        container: $typeAheadContainer,
+        historyContainer: $historyContainer
+      });
+
+      if (typeof DIGITAL_EMITTER !== 'undefined') {
+            DIGITAL_EMITTER.trigger('typeaheadv2');
+      }
+
+    // Initialize the default search handler JS
+    thdSearch.init();
+
+    $(document)
+      .on('click touchend', '.SearchBox__cover', headerSearchCore.openSearch)
+      .on('click touchend', '.SearchBox__input', headerSearchCore.openSearch)
+      .on('focus', '.SearchBox__button', headerSearchCore.openSearch)
+      .on('blur', '.SearchBox__button', headerSearchCore.closeSearch)
+      .on('click touchend', '.SearchBox__cancel', headerSearchCore.clearSearchField)
+      /*.on('searchTermUpdated', privateMethods.searchTermUpdated)*/;
+
+    return this;
+  };
+
+  return search;
+});

@@ -1,0 +1,542 @@
+(function closure(root, factory) {
+  if(typeof define === 'function' && define.amd) {
+    define('plugin.tooltip', ['jquery', 'mustache', 'hoverIntent'],
+      function load(jQuery, Mustache, hoverIntent) {
+        return factory(root, jQuery, Mustache, hoverIntent);
+      });
+  } else{
+    // For non-AMD module, expose this to global (will also be useful for test cases)
+    factory(root, jQuery, Mustache, $.hoverIntent);
+  }
+})(this, function factory(root, $, Mustache, hoverIntent) {
+  var privateMethods = {};
+
+  privateMethods.createToolTipId = function _createToolTipId() {
+    function s4() {
+    return Math.floor((1 + Math.random()) * 0x10000)
+      .toString(16)
+      .substring(1);
+    }
+
+    return ['tooltip', s4() + s4(), s4(), s4(), s4(), s4() + s4() + s4()].join('-');
+  };
+
+  privateMethods._tooltips = [];
+  privateMethods.addTooltip = function addTooltip(tooltip) {
+    privateMethods._tooltips.push(tooltip);
+  };
+  privateMethods.closeOthers = function closeOthers(tooltip) {
+    for (var x = 0; x < privateMethods._tooltips.length; x++) {
+      if (privateMethods._tooltips[x].id !== tooltip.id) {
+        privateMethods._tooltips[x].close();
+      }
+    }
+  };
+
+  // custom select class
+  function ToolTip(element, options) {
+    this.options = $.extend({
+      position: 'bottom',
+      content: null,
+      type: 'hover',
+      boundingElement: null,
+      onCreate: null,
+      onOpen: null,
+      onClose: null,
+      noPad: false,
+      closeButton: false,
+      bestPosition: true,
+      width: 'medium',
+      closeOnClick: false
+    }, options);
+
+    this.$element = $(element);
+    this.id = this.$element.data('tooltipid');
+
+    if (!this.id) {
+      this.id = privateMethods.createToolTipId();
+      this.$element.data('tooltipid', this.id);
+    }
+    this.$tooltip = null;
+
+    this.init();
+
+    privateMethods.addTooltip(this);
+  }
+
+  ToolTip._template = '' +
+    '<div id="{{id}}" class="ToolTip ToolTip--{{orientation}}">' +
+      '<div class="ToolTip__closebutton" />' +
+      '<div class="ToolTip__arrow ToolTip__arrow--{{orientation}}" />' +
+      '<div class="ToolTip__wrapper ToolTip__wrapper--{{orientation}}">' +
+        '<div class="ToolTip__content ToolTip__content--{{orientation}}" />' +
+      '</div>' +
+    '</div>' +
+  '';
+
+
+  ToolTip.prototype = {
+    _createTooltip: function () {
+      // Create the HTML
+      var tooltipHtml = Mustache.render(ToolTip._template, {
+        id: this.id,
+        orientation: this.options.position
+      });
+
+      // Used to give a safe place to read the size
+      var $envelope = $('<div></div>')
+        .addClass('Envelope')
+        .appendTo('body');
+
+      // Create the DOM
+      var $tooltip = $(tooltipHtml)
+        .appendTo($envelope);
+
+      var $tooltipArrow = $tooltip.find('.ToolTip__arrow');
+      var $tooltipWrapper = $tooltip.find('.ToolTip__wrapper');
+      var $tooltipContent = $tooltip.find('.ToolTip__content');
+      var $tooltipClose = $tooltip.find('.ToolTip__closebutton');
+
+      $tooltipContent.toggleClass('ToolTip__content--no-pad', (this.options.noPad));
+      $tooltipWrapper.addClass('ToolTip--' + this.options.width);
+
+      // Close button
+      if(!this.options.closeButton) {
+        $tooltipClose.remove();
+      }else{
+        $tooltipClose.on('click touchend', $.proxy(this._toggle, this));
+      }
+
+      // get content
+      if (this.options.content && (typeof this.options.content === 'function')) {
+        $tooltipContent.html(this.options.content());
+      } else if (this.options.content) {
+        $tooltipContent.html(this.options.content);
+      } else if (this.options.onCreate) {
+        // Pass in the tooltip to get content
+        this.options.onCreate($tooltipContent);
+      } else {
+        $tooltipContent.html(this.$element.data('content'));
+      }
+
+      // fix the height cause we gotta
+      this.resize($tooltip);
+
+      $tooltip
+        .addClass('ToolTip--closed');
+
+      $tooltipWrapper
+        .addClass('ToolTip__wrapper--closed');
+
+      $tooltipArrow.addClass('ToolTip__arrow--closed');
+
+      // Move it back to the body
+      $tooltip.appendTo('body');
+
+      // Clean this up
+      $envelope.remove();
+
+      // for testing
+      return $tooltip;
+    },
+    _windowDimensions: function() {
+      // This is a fake for the window to get the actual visible dimensions
+      var $sizer = $('<div></div>')
+        .addClass('Sizer')
+        .appendTo('body');
+
+      var windowData = this._elementDimensions($sizer);
+
+      $sizer.remove();
+
+      return windowData;
+    },
+    _elementDimensions: function($element) {
+      var elementData = $element.offset();
+      elementData.width = $element.outerWidth();
+      elementData.height = $element.outerHeight();
+      elementData.bottom = elementData.top + elementData.height;
+      elementData.right = elementData.left + elementData.width;
+
+      return elementData;
+    },
+    _setOrientation: function (orientation) {
+       this.$tooltip
+        .removeClass('ToolTip--bottom ToolTip--top ToolTip--left ToolTip--right')
+        .addClass('ToolTip--' + orientation)
+        .find('.ToolTip__wrapper')
+          .removeClass('ToolTip__wrapper--bottom ToolTip__wrapper--top ToolTip__wrapper--left ToolTip__wrapper--right')
+          .addClass('ToolTip__wrapper--' + orientation)
+          .find('.ToolTip__content')
+            .removeClass('ToolTip__content--bottom ToolTip__content--top ToolTip__content--left ToolTip__content--right')
+            .addClass('ToolTip__content--' + orientation);
+
+      this.$tooltip
+        .find('.ToolTip__arrow')
+          .removeClass('ToolTip__arrow--bottom ToolTip__arrow--top ToolTip__arrow--left ToolTip__arrow--right')
+          .addClass('ToolTip__arrow--' + orientation);
+    },
+    _positionTooltip: function () {
+      var position;
+
+      if (!this[this.options.position]) {
+        throw 'ToolTip position "' + this.options.position + '" does not exist.';
+      }
+
+      // Use .call() so this remains intact
+      position = this[this.options.position]();
+
+      // Set all of them, even the undefined to force removal of old values
+      this.$tooltip.css({
+        'top' : (typeof position.tooltip.top !== 'undefined') ? position.tooltip.top : 'auto',
+        'bottom' : (typeof position.tooltip.bottom !== 'undefined') ? position.tooltip.bottom : 'auto',
+        'left' : (typeof position.tooltip.left !== 'undefined') ? position.tooltip.left : 'auto',
+        'right' : (typeof position.tooltip.right !== 'undefined') ? position.tooltip.right : 'auto',
+      });
+
+      this.$tooltip
+        .find('.ToolTip__arrow')
+        .css({
+          'margin-top' : (typeof position.arrow.top !== 'undefined') ? '' + (position.arrow.top - 10)  + 'px' : '0',
+          'margin-left' : (typeof position.arrow.left !== 'undefined') ? '' + (position.arrow.left - 10) + 'px' : '0'
+        });
+    },
+    _toggle: function (event) {
+
+      if (this.$tooltip && !this.$tooltip.hasClass('ToolTip--closed')) {
+        if (this.resizeHandler) {
+          $(window).off('resize.ToolTip', this.resizeHandler);
+          this.resizeHandler = null;
+        }
+
+        event.preventDefault();
+
+        this._close(event);
+      } else {
+        this._open(event);
+
+        if (!this.resizeHandler) {
+          this.resizeHandler = $.proxy(this._positionTooltip, this);
+          $(window).on('resize.ToolTip', this.resizeHandler);
+        }
+      }
+    },
+
+    _open: function (event) {
+      var that = this;
+      var open = true;
+
+      privateMethods.closeOthers(this);
+
+      if (!this.$tooltip) {
+        this.$tooltip = this._createTooltip();
+      }
+
+      if(that.options.type === 'customHover' && !that.$tooltip.hasClass('ToolTip--closed')){
+        $(document).on('click touchend', $.proxy(that._documentClickListner, that));
+        return false;
+      }
+
+      function openTooltip () {
+        if (event) {
+          event.preventDefault();
+        }
+
+        // Time out is arbitrary, but needs to be long enough for a browser paint
+        setTimeout(function () {
+          that.$tooltip
+            .removeClass('ToolTip--closed')
+            .find('.ToolTip__wrapper')
+              .removeClass('ToolTip__wrapper--closed');
+
+          that.$tooltip
+            .find('.ToolTip__arrow')
+              .removeClass('ToolTip__arrow--closed');
+
+          that.resize();
+
+          that._positionTooltip();
+          if ((that.options.type === 'click' || that.options.type === 'customHover') && that.options.closeOnClick) {
+            $(document).on('click touchend', $.proxy(that._documentClickListner, that));
+          }
+        }, 36);
+      }
+
+      if (this.options.onOpen) {
+        // Pass in content in case it needs to change
+        this.options.onOpen(this.$tooltip.find('.ToolTip__content'), function (result) {
+          if (typeof result !== 'undefined') {
+            open = result;
+          }
+
+          if (open) {
+            openTooltip();
+          }
+        });
+      } else {
+        openTooltip();
+      }
+
+      return this;
+    },
+    _close: function () {
+      if ((this.options.type === 'click' || this.options.type === 'customHover') && this.options.closeOnClick) {
+        $(document).off('click touchend', this._documentClickListner);
+      }
+      if (this.$tooltip && this.$tooltip.length) {
+        this.$tooltip.addClass('ToolTip--closed')
+          .find('.ToolTip__wrapper').addClass('ToolTip__wrapper--closed');
+
+        this.$tooltip
+          .find('.ToolTip__arrow').addClass('ToolTip__arrow--closed');
+
+        if (this.options.onClose) {
+          // Pass in content in case it needs to change
+          this.options.onClose(this.$tooltip.find('ToolTip__content'));
+        }
+      }
+    },
+    _documentClickListner: function (event) {
+      var $el = $(event.target);
+      // only close the tooltip if the click is outside the toolti
+      if ($el.parents('.ToolTip').length) return;
+      if ($el.hasClass('.ToolTip')) return;
+
+      $(document).off('click touchend', this._documentClickListner);
+      this._close();
+    },
+    _calculatePosition: function (orientation, windowData, targetData, boxData) {
+      var tooltipData;
+
+      this._setOrientation(orientation);
+
+      // Do this now, since the orientation change altered things.
+      tooltipData = this._elementDimensions(this.$tooltip);
+
+      // Do the position calculation
+      return this['_' + orientation + 'Position'](windowData, targetData, tooltipData, boxData);
+    },
+    _getWidth: function() {
+      var PADDING = 20;
+      switch(this.options.width) {
+        case 'xsmall':
+          return 130 + PADDING;
+        case 'small':
+          return 200 + PADDING;
+        case 'medium':
+          return 320 + PADDING;
+        case 'large':
+          return 500 + PADDING;
+        default:
+          return 320 + PADDING;
+      }
+    },
+    _bottomPosition: function (windowData, target, tooltip, bounds) {
+      var canFitWithinVerticleBounds = ((target.bottom + tooltip.height) < bounds.bottom);
+
+      if (!canFitWithinVerticleBounds && this.options.bestPosition) {
+        return;
+      }
+
+      var targetCenter = (target.left + (target.width / 2));
+      var offsetLeft = (targetCenter - (tooltip.width / 2));
+      var boundedOffsetLeft = Math.max(bounds.left, offsetLeft);
+      var maxLeft = (windowData.right - tooltip.width);
+      var boundedOffsetLeft = Math.min(maxLeft, Math.max(bounds.left, offsetLeft));
+
+      return {
+        orientation: 'bottom',
+        tooltip: {
+          top: (target.top + target.height),
+          left: boundedOffsetLeft
+        },
+        arrow: {
+          left: offsetLeft - boundedOffsetLeft
+        }
+      };
+    },
+    _topPosition: function (windowData, target, tooltip, bounds) {
+      var canFitWithinVerticleBounds = (tooltip.height < (target.top - bounds.top));
+
+      if (!canFitWithinVerticleBounds && this.options.bestPosition) {
+        return;
+      }
+
+      var targetCenter = (target.left + (target.width / 2));
+      var offsetLeft = (targetCenter - (tooltip.width / 2));
+      var maxLeft = (windowData.right - tooltip.width);
+      var boundedOffsetLeft = Math.min(maxLeft, Math.max(bounds.left, offsetLeft));
+
+      return {
+        orientation: 'top',
+        tooltip: {
+          bottom: windowData.bottom - target.top,
+          left: boundedOffsetLeft
+        },
+        arrow: {
+          left: offsetLeft - boundedOffsetLeft
+        }
+      };
+    },
+    _rightPosition: function (windowData, target, tooltip, bounds) {
+      // hard coded width of 320 due to animation constraints
+      var canFitWithinHorizontalBounds = (this._getWidth() < (bounds.right - target.right));
+
+      if (!canFitWithinHorizontalBounds && this.options.bestPosition) {
+        return;
+      }
+
+      var targetMiddle = (target.top + (target.height / 2));
+      var offsetTop = (targetMiddle - (tooltip.height / 2));
+      var maxTop = (windowData.bottom - tooltip.height);
+      var boundedOffsetTop = Math.min(maxTop, Math.max(bounds.top, offsetTop));
+
+      return {
+        orientation: 'right',
+        tooltip: {
+          top: boundedOffsetTop,
+          left: target.right
+        },
+        arrow: {
+          top: offsetTop - boundedOffsetTop
+        }
+      };
+    },
+    _leftPosition: function (windowData, target, tooltip, bounds) {
+      // hard coded width of 320 due to animation constraints
+      var canFitWithinHorizontalBounds = (this._getWidth() < (target.left - bounds.left));
+
+      if (!canFitWithinHorizontalBounds && this.options.bestPosition) {
+        return;
+      }
+
+      var targetMiddle = (target.top + (target.height / 2));
+      var offsetTop = (targetMiddle - (tooltip.height / 2));
+      var maxTop = (windowData.bottom - tooltip.height);
+      var boundedOffsetTop = Math.min(maxTop, Math.max(bounds.top, offsetTop));
+
+      return {
+        orientation: 'left',
+        tooltip: {
+          top: boundedOffsetTop,
+          right: windowData.width - target.left
+        },
+        arrow: {
+          top: offsetTop - boundedOffsetTop
+        }
+      };
+    },
+    _bestPosition: function (orientationPreferences) {
+      var windowData = this._windowDimensions();
+      var boxData = (this.options.boundingElement) ? this._elementDimensions($(this.options.boundingElement)) : windowData;
+      var elementData = this._elementDimensions(this.$element);
+      var bestPosition;
+      var position;
+
+      // check each position
+      for (var x = 0; x < orientationPreferences.length; x++) {
+        // attempt to position it
+        position = this._calculatePosition(orientationPreferences[x], windowData, elementData, boxData);
+
+        // If it worked
+        if (position) {
+          // this is the best position
+          bestPosition = position;
+          break;
+        }
+      }
+
+      return bestPosition;
+    },
+    _selectPosition: function (orientationPreferences) {
+      var position = this._bestPosition(orientationPreferences);
+
+      // If no position could be found
+      if (!position) {
+        console.log('Error, could not position tooltip successfully');
+      }
+
+      return position;
+    },
+    init: function() {
+      switch (this.options.type) {
+        case 'hover':
+          if (!/ipad/i.test(root.navigator.userAgent)) {
+            this.$element.hoverIntent({
+              over: $.proxy(this._open, this),
+              out: $.proxy(this._close, this)
+            });
+          }
+          break;
+        case 'click':
+          this.$element.on('click touchend', $.proxy(this._toggle, this));
+          break;
+        case 'customHover':
+          if (!/ipad/i.test(root.navigator.userAgent)) {
+            this.$element.on('mouseenter',$.proxy(this._open, this));
+          }
+          break;
+      }
+
+      return this;
+    },
+    resize: function ($tooltip) {
+      var $tooltipWrapper = ($tooltip || this.$tooltip).find('.ToolTip__wrapper');
+      var $tooltipContent = $tooltipWrapper.find('.ToolTip__content');
+      // .outerHeight() was failing - returing the same value as .height() even with margin;
+      var height = $tooltipContent.height() + parseInt($tooltipContent.css('margin-bottom'), 10) + parseInt($tooltipContent.css('margin-top'), 10);
+
+      $tooltipWrapper.css('height', height);
+    },
+    hide: function () {
+      var that = this;
+      this.$tooltip.hide();
+      this._close();
+      setTimeout(function () {
+        that.$tooltip.show();
+      }, 300);
+    },
+    close: function () {
+      this._close();
+    },
+    open: function () {
+      this._open();
+    },
+    bottom: function (windowData, targetData, tooltipData, boxData) {
+      return this._selectPosition(['bottom', 'top', 'right', 'left']);
+    },
+    top: function (windowData, targetData, tooltipData, boxData) {
+      return this._selectPosition(['top', 'bottom', 'right', 'left']);
+    },
+    left: function (windowData, targetData, tooltipData, boxData) {
+      return this._selectPosition(['left', 'right', 'bottom', 'top']);
+    },
+    right: function (windowData, targetData, tooltipData, boxData) {
+      return this._selectPosition(['right', 'left', 'bottom', 'top']);
+    }
+  };
+
+  // jQuery plugin interface
+  $.fn.tooltip = function(opt) {
+    // slice arguments to leave only arguments after function name
+    var args = Array.prototype.slice.call(arguments, 1);
+
+    return this.each(function() {
+      var element = $(this);
+      var instance = element.data('ToolTip');
+
+      if (!instance) {
+        // create plugin instance and save it in data
+        if(opt!=='close') {
+          element.data('ToolTip', new ToolTip(this, opt));
+        }
+      } else {
+        // if instance already created call method
+        if ((typeof opt === 'string') && (instance[opt])) {
+          instance[opt].apply(instance, args);
+        }
+      }
+    });
+  }
+  return {};
+});

@@ -1,0 +1,247 @@
+/* global jQuery,THD,lpAddVars,searchUrl */
+/*
+	THD.Search
+
+	Dependencies:
+		jquery
+
+	Methods:
+		submit
+
+	Usage:
+		THD.Search.submit({
+			searchValue : '', //string, text to be submitted for search
+			category : 'Search All', //optional, category to be searched in
+			error : function(){ return false; } //optional, to be called when url is unable to be created
+		});
+*/
+(function closure(root, factory) {
+	if(typeof define === 'function' && define.amd) {
+		define(['jquery', 'global.namespace', 'global.lib', 'global.utility'], function load($, THD, globalLib, globalUtility) {
+			return factory(root, $, THD, globalLib, globalUtility);
+		});
+	} else{
+		// For non-AMD module, expose this to global (will also be useful for test cases)
+		/* eslint-disable*/
+		factory(root, jQuery, THD, globalLib, globalUtility);
+		/*eslint-enable*/
+	}
+})(this, function factory(root, $, THD, globalLib, globalUtility) {
+	/*
+		Private Variables
+	*/
+	var cachedElms = {};
+	var searchErrorText = 'Enter Keyword or SKU';
+	var defaultCat = 'Search All';
+	var hostName = '';
+	var search = THD.Utility.Namespace.createNamespace('THD.Search');
+	/*
+		Private Functions
+	*/
+
+	function checkKeySubmit(e) {
+		if (e.keyCode == 13) {
+			var btn = cachedElms.searchButton;
+			if (btn) {
+				btn.click();
+				return false;
+			}
+		}
+	}
+
+	function getCategoryVals(string) {
+		var catValues = {};
+		var categoryName = $.trim(string);
+		var selectedCategory = categoryName;
+		var categoryView = categoryName.replace(/ /g, '-').replace(/&/g, '-');
+
+		catValues = {
+			name: categoryName,
+			view: categoryView,
+			param: selectedCategory
+		};
+
+		return catValues;
+	}
+
+	function cleanSearchVal(searchValue) {
+		var searchVal = searchValue;
+		searchVal = searchVal.replace(/^\s+|\s+$/g, '');
+		searchVal = ( searchVal.indexOf('&') === 0 ) ? searchVal.substr(1) : searchVal;
+
+		if(searchVal !== '' && searchVal !== searchErrorText) {
+			searchVal = globalLib.encodeComponent(searchVal);
+		}else{
+			searchVal = false;
+		}
+		return searchVal;
+	}
+
+	function buildUrl(catValues, strSearchValue) {
+		var formActionURL;
+		var selectedVal = '5yc1vZ';
+		if(cachedElms.selectedVal !== null) {
+			selectedVal += cachedElms.selectedVal.val();
+		}
+		// Check if the user selected any category.
+		if(catValues.name !== defaultCat) {
+			formActionURL = THD.Utils.Url.set({
+				url: hostName + '/b/' + catValues.view + '/N-' + selectedVal + '/Ntt-' + strSearchValue,
+				setParms: {
+					'NCNI-5': 'undefined',
+					'selectedCatgry': catValues.param
+				}
+			});
+		}else{
+			formActionURL = hostName + '/s/' + strSearchValue + '?NCNI-5';
+		}
+		// change & sign to comply with clean url standards
+		formActionURL = formActionURL.replace('%20', '+');
+		// QC-29657: remove $ sign for back-end security, to not send an error to client
+		formActionURL = formActionURL.replace(/%24/g, '');
+
+		return formActionURL;
+	}
+
+	function parseSearchUrl(options) {
+		// validateSearchRequest(document.searchBoxForm.keyword,searchUrl);
+		var formActionURL;
+		var catValues;
+		var strSearchValue = cleanSearchVal(options.searchValue);
+
+		catValues = getCategoryVals(options.category);
+
+		if(strSearchValue) {
+			formActionURL = buildUrl(catValues, strSearchValue);
+			return formActionURL;
+		}else {
+			return false;
+		}
+	}
+	function submitSearch(options) {
+		var searchLoc = parseSearchUrl(options);
+		if(searchLoc) {
+			try{
+				lpAddVars('session', 'SearchKeyword', options.searchValue);
+			} catch(err) {}
+			window.location.href = searchLoc;
+		}else{
+			if(options.error) {
+				options.error();
+			}
+		}
+	}
+	function searchFromForm(evt) {
+		evt.preventDefault();
+		if(typeof cachedElms.searchFocus === 'undefined') {
+			onReady();
+		}
+		submitSearch({
+			searchValue: cachedElms.searchFocus.val(),
+			category: cachedElms.selectedCategory.text() || defaultCat, //get the selected category from the dept-drown li#list a span.
+			error: function error() {
+				if(cachedElms.lblSearch.length > 0) {
+					cachedElms.lblSearch.text(searchErrorText);
+				} else {
+					cachedElms.searchFocus.attr('placeholder', '');
+				}
+			}
+		});
+	}
+	function getSearchValFromUrl(defaultTerm) {
+		var docUrl = document.URL;
+		var isBrowse = (docUrl.indexOf('/Ntt-') > -1); // checks to see if category selected
+		var browseRegEx = /NTT-(.*?)\?/i;
+		var searchRegEx = /\/s\/(.*?)(\?|$|\/)/i;
+		var regex = (isBrowse) ? browseRegEx : searchRegEx;
+		var searchMatch = new RegExp(regex).test(docUrl);
+		return (searchMatch) ? decodeURIComponent(decodeURIComponent(docUrl.match(regex)[1])) : defaultTerm;
+	}
+	function getSearchVal() {
+		var searchTerm = '';
+		var keyword = THD.Utils.Url.get({ lookupParm: 'keyword' });
+		var searchRedirect = THD.Utils.Url.get({ lookupParm: 'searchRedirect' });
+		var wcsParmCheck = (keyword) ? keyword : searchRedirect;
+
+		// final check for wcs style urls
+		if(wcsParmCheck) {
+			searchTerm = wcsParmCheck;
+		}else{
+			searchTerm = getSearchValFromUrl(searchTerm);
+		}
+		searchTerm = searchTerm.replace(/\+/g, ' ');
+		return searchTerm;
+	}
+	
+	function searchValuePersist() {
+		// Get the value
+		var searchTerm = getSearchVal();
+
+		// Check if its a thing
+		if (searchTerm !== '') {
+			// Set the search term
+			try {
+				searchTerm = decodeURIComponent(searchTerm);
+			}catch(e) {
+				console.log(e);
+			}
+			cachedElms.searchFocus.val(searchTerm);
+
+			// We had an on-ready race condition here - without making this code
+			// have header as a dependency (which already has this as a dependency)
+			// we have to delay the firing of this event.
+			setTimeout(function _searchTermUpdateDelay() {
+				// This lets the header know something is up
+				$(document).trigger('searchTermUpdated');
+
+				// Delay is the standard 150ms for all animations
+			}, 150);
+		}
+	}
+
+	function getHostName() {
+		//var searchUrl = THD.Utility.Config.searchUrl;
+		// Populating the values from the hidden field to the local variable
+		//hostName = searchUrl.substring(0, searchUrl.indexOf('/webapp'));// searchUrl is a global variable set through the JSP file above the dept-search block
+		hostName = THD.Utility.Config.host;
+	}
+	function cacheElms() {
+		cachedElms.lblSearch = $('.headerSearch__label');
+		cachedElms.searchFocus = $('#headerSearch');
+		cachedElms.selectedCategory = $('#list .btn span');
+		cachedElms.searchButton = $('#headerSearchButton');
+		cachedElms.selectedVal = $('#encodedNVal');
+	}
+	/*
+		Initialization Events
+	*/
+	search.init = function init() {
+		$(document)
+			// perform search
+			.on('click', '#headerSearchButton', searchFromForm)
+			.on('keydown', '#headerSearch', checkKeySubmit);
+
+		$(function ready() {
+			cacheElms();
+			getHostName();
+			searchValuePersist();
+		});
+	};
+	/*
+		Public Functions
+	*/
+	search.submit = function submit(options) {
+		var defaults = {
+			searchValue: '', // string, text to be submitted for search
+			category: 'Search All', // optional, category to be searched in
+			error: function error() { return false; } // optional, to be called when url is unable to be created
+		};
+
+		defaults = $.extend(defaults, options);
+		submitSearch(defaults);
+	};
+
+	search.getSearchVal = getSearchVal;
+
+	return search;
+});

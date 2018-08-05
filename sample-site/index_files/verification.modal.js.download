@@ -1,0 +1,309 @@
+(function closure(root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define([
+      'jquery',
+      'account.modal',
+      'verification.helper',
+      'verification.analytics'
+    ], function load(jQuery, modal, verificationHelper, verificationAnalytics) {
+      return factory(root, jQuery, modal, verificationHelper, verificationAnalytics);
+    })
+  } else {
+    factory(root, jQuery, modal, verificationHelper, verificationAnalytics);
+  }
+})(this, function factory(root, $, modal, verificationHelper, verificationAnalytics) {
+
+  var generateVerificationTemplate = function(headerText, formattedInput, resendText) {
+    this.$template = (
+      $('<div></div>')
+        .attr('id', 'verification-modal__content')
+    );
+
+    this.$header = (
+      $('<header></header>')
+        .attr('id', 'verification-overlay-header')
+        .addClass('thd-overlay__header grid')
+        .append(
+          $('<div></div>')
+            .addClass('col__10-12 correction')
+            .append(
+              $('<h2></h2>')
+                .addClass('u__husky thd-overlay__title')
+                .text(headerText)
+            ),
+          $('<div></div>')
+            .addClass('col__2-12 u__text-align--right')
+            .append(
+              $('<button></button>')
+                .addClass('thd-overlay__close--standAlone verification-svg-close')
+                .html(
+                  '<svg class="" viewBox="0 0 32 32"><path d="M27.229' +
+                  ' 8.391l-3.385-3.386-7.843 7.838-7.84-7.84-3.386 3.385 7.609 7.608-7.613 7.612 3.385 3.386' +
+                  ' 7.843-7.838 7.84 7.841 3.387-3.386-7.61-7.608z"></path></svg>'
+                )
+            )
+        )
+    );
+
+
+    this.$body = (
+      $('<div></div>')
+        .attr('id', 'verification-overlay-body')
+        .addClass('col__12-12')
+        .append(
+          $('<p></p>')
+            .addClass('col__12-12')
+            .html(formattedInput),
+          $('<form></form>')
+            .addClass('col__12-12 form-input')
+            .attr('id', 'form-input-verification')
+            .append(
+              $('<label></label>')
+                .addClass('form-input__label')
+                .attr('for', 'verification-code')
+                .attr('data-content', 'otp')
+                .append(
+                  $('<span></span>')
+                    .addClass('form-input__label-content')
+                    .text('Verification Code')
+                ),
+              $('<input/>')
+                .addClass('form-input__field')
+                .attr('id', 'verification-code')
+                .attr('placeholder', 'Enter Code')
+                .attr('type', 'text')
+                .attr('maxlength', '6')
+                .focus()
+            ),
+          $('<span></span>')
+            .addClass('col__12-12 resend__help-message')
+            .text(resendText)
+            .append(
+              $('<a></a>')
+                .addClass('resend-code-link u__default-link')
+                .attr('id', 'resend-code')
+                .text(' Resend Code'),
+              $('<span></span>')
+                .attr('id', 'resend-code-spinner')
+                .css("visibility", "hidden")
+                .addClass('segment-spinner segment-spinner--small')
+            ),
+          $('<span></span>').attr('id', 'resend__response-message').addClass('col__12-12')
+        )
+    );
+
+    this.$footer = (
+      $('<footer></footer>')
+        .addClass('verify-phone-footer')
+        .addClass('grid')
+        .append(
+          $('<div></div>')
+            .addClass('col__12-12')
+            .append(
+              $('<button></button>')
+                .attr('id', 'verification-code-submit')
+                .addClass('bttn bttn--primary disabled')
+                .append(
+                  $('<span></span>').addClass('bttn__content')
+                    .text('Verify')
+                ),
+              $('<button></button>')
+                .addClass('bttn-outline bttn-outline--primary')
+                .attr('id', 'verification-cancel')
+                .append(
+                  $('<span></span>').addClass('bttn__content').text('Cancel')
+                ),
+              $('<div></div>')
+                .attr('id', 'verification-legal')
+                .addClass('modal-legal-grid')
+                .html("Message and data rates may apply.")
+                .append(
+                  $('<div></div>').addClass('modal-legal-links').append(
+                    $('<a></a>').addClass('modal-legal-terms u__default-link').attr('href', "https://www.homedepot.com/c/PH_MyAccount").attr('target', '_blank').html('Terms of Use'),
+                    '|',
+                    $('<a></a>').addClass('modal-legal-policy u__default-link').attr('href', "https://www.homedepot.com/c/Privacy_Security").attr('target', '_blank').html('Privacy Policy')
+                  )
+                )
+            )
+        )
+    );
+    this.$template.append(this.$header, this.$body, this.$footer);
+    return this.$template;
+  };
+
+  var renderTemplateModal = function(title, input, isMobile) {
+    var headerText, formattedInput, resendText;
+    resendText = "Didn't receive your code?";
+    if (title === 'verifyPhone') {
+      headerText = 'Verify Your Phone Number';
+      formattedInput = '<span>' +
+        "We've sent you a verification code to " +
+        verificationHelper.formatPhone(input) + '.' +
+        '<br>' +
+        'Please enter your verification code below.' +
+        '</span>';
+    } else if (title === "verify2FactorEmail") {
+      headerText = 'Verify Your Identity';
+      resendText = "It may take a minute to send your code. " + resendText;
+      formattedInput = "For your security, please enter the verification code sent to your email at " +
+        input + '.';
+    } else if (title === 'verify2FactorText') {
+			headerText = 'Verify Your Identity';
+			resendText = "It may take a minute to send your code. " + resendText;
+			formattedInput = "Please enter the verification code sent to your mobile device at " +
+				verificationHelper.maskPhone(input) + '.';
+		} else {
+      headerText = 'Verify Your Email';
+      formattedInput = '<span>' +
+        "We've sent you a verification code to " +
+        input + '.' +
+        '<br>' +
+        'Please enter your verification code below.' +
+        '</span>';
+    }
+
+    var template = generateVerificationTemplate(headerText, formattedInput, resendText);
+
+    showVerificationModal(template, isMobile);
+
+		if (title === 'verifyPhone') verificationAnalytics.openVerifyPhoneOverlay();
+		if (title === 'verify2FactorEmail' || title === 'verify2FactorText') verificationAnalytics.openVerify2FAModal();
+
+    $('#verification-code')
+      .keydown(function(e) {
+        // Allow: backspace, delete, tab, escape, enter and .
+        if ($.inArray(e.keyCode, [46, 8, 9, 27, 110, 190]) !== -1 ||
+          // Allow: Ctrl/cmd+A
+          (e.keyCode === 65 && (e.ctrlKey === true || e.metaKey === true)) ||
+          // Allow: Ctrl/cmd+C
+          (e.keyCode === 67 && (e.ctrlKey === true || e.metaKey === true)) ||
+          // Allow: Ctrl/cmd+X
+          (e.keyCode === 88 && (e.ctrlKey === true || e.metaKey === true)) ||
+          // Allow: Ctrl/cmd+V
+          (e.keyCode === 86 && (e.ctrlKey === true || e.metaKey === true)) ||
+          // Allow: home, end, left, right
+          (e.keyCode >= 35 && e.keyCode <= 39)) {
+          // let it happen, don't do anything
+          return;
+        }
+        // Ensure that it is a number and stop the keypress
+        if ((e.shiftKey || (e.keyCode < 48 || e.keyCode > 57)) && (e.keyCode < 96 || e.keyCode > 105)) {
+          e.preventDefault();
+        }
+      })
+      .focus(function() {
+        this.removeAttribute('placeholder');
+      })
+      .focusout(function() {
+        this.placeholder = 'Enter Code';
+      });
+  };
+
+  var showVerificationModal = function($content, isMobile) {
+    var defaultOptions = {
+      "width": "400px",
+      "background": "white",
+      "max-height": "calc(100% - 100px)",
+      "position": "fixed",
+      "top": "50%",
+      "left": "50%",
+      "transform": "translate(-50%, -50%)"
+    };
+    var mobileOptions = {
+      'width': "100vw",
+      'height': "100vh",
+      'max-height': 'none',
+      'margin': '0px',
+      'z-index': '100'
+    };
+
+    var modalOptions = isMobile ? $.extend({}, defaultOptions, mobileOptions) : defaultOptions;
+
+    $content.css(modalOptions);
+
+    var documentHeight = $(document).height() + 'px';
+
+    var $modalOverlay = $('<div />').addClass('account-modal__overlay').css('height', documentHeight);
+    var $modalContainer = $('<div />').addClass('account-modal__container')
+      .html($modalOverlay)
+      .append($content);
+
+    $('body').append($modalContainer);
+
+    $('.thd-overlay__close--standAlone').on('click', function(event) {
+      event.preventDefault();
+      $('.account-modal__container').remove();
+    });
+
+    $('#verification-cancel').on('click', function(event) {
+      event.preventDefault();
+      $('.account-modal__container').remove();
+    });
+
+    $('#verification-code').on('input', function(event) {
+      var $verificationButton = $('#verification-code-submit');
+
+      $('#form-input-verification').removeClass("form-input--error");
+      $("span.form-input-error__message").remove();
+
+      $(this).val().length === 6 ?
+        $verificationButton.removeClass('disabled') :
+        $verificationButton.addClass('disabled');
+    });
+  };
+
+  var setOnSubmitListener = function(onClick) {
+
+    var $verificationButton = $('#verification-code-submit');
+    $('#verification-code-submit').on('click', function click() {
+      if ($verificationButton.hasClass('disabled')) return;
+
+      $verificationButton.addClass('disabled');
+      $verificationButton
+        .find('.bttn__content')
+        .text("")
+        .append(
+          $('<span></span>').addClass('segment-spinner segment-spinner--bttn')
+        );
+
+      onClick();
+    });
+
+    $('#verification-code').keydown(function(e) {
+      if ($verificationButton.hasClass('disabled')) return;
+
+      if (e.keyCode === 13) {
+        $verificationButton.addClass('disabled');
+        $verificationButton
+          .find('.bttn__content')
+          .text("")
+          .append(
+            $('<span></span>').addClass('segment-spinner segment-spinner--bttn')
+          );
+
+        onClick();
+        event.stopPropagation()
+      }
+    });
+  };
+
+  var setResendCodeListener = function(ajax, analytics) {
+    var $verificationButton = $('#verification-code-submit');
+    $('#resend-code').off().on("click", function(event) {
+      event.stopPropagation();
+      (typeof analytics === 'function') && analytics();
+      !$verificationButton.hasClass('disabled') && $verificationButton.addClass('disabled');
+
+      ajax();
+    });
+  };
+
+  return {
+    renderTemplateModal: renderTemplateModal,
+    setOnSubmitListener: setOnSubmitListener,
+    setResendCodeListener: setResendCodeListener,
+    hideModal: function() {
+      modal.hideModal();
+    }
+  }
+});

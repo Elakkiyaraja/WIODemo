@@ -1,0 +1,68 @@
+define([
+  'workshopsWidget',
+  'storeDetails',
+  'storeFinderApi',
+  'mapWidget',
+  'text!storeDetailsWrapper',
+  'Localizer',
+  'thd-overlay',
+  'localizationPopup',
+  'mustache',
+  'jquery'
+], function(
+  workshopsWidget,
+  storeDetails,
+  storeFinderApi,
+  mapWidget,
+  storeDetailsWrapper,
+  Localizer,
+  thdOverlay,
+  localizationPopup,
+  mustache,
+  $
+) {
+
+  return {
+    init: function(target) {
+      return Localizer.localize()
+        .then(function() {
+          var promise;
+
+          if (Localizer.status.isNotLocalized() || Localizer.status.isDefaultLocalized()) {
+            promise = $.Deferred();
+            promise.resolve();
+          } else {
+            promise = storeFinderApi.getStoreForStoreId(Localizer.getLocalizedStore().storeId);
+          }
+
+          return promise;
+        })
+        .then(function(data) {
+          var $widget;
+
+          if (!data) {
+            return false;
+          }
+
+          var store = data.stores[0];
+          store.name = 'You\'re Shopping ' + store.name;
+          store.isMobile = (THD_GLOBAL.channel === 'mobile');
+          $widget = $(mustache.render(storeDetailsWrapper, store));
+
+          var $workshopTarget = $widget.find('#storeWorkshops');
+          var $storeTarget = $widget.find('#storeDetails');
+          var $storeMapTarget = $widget.find('#localStoreMap');
+
+          target.append($widget);
+          workshopsWidget.init($workshopTarget, store.storeId);
+          storeDetails.init($storeTarget, store);
+
+          if(!store.isMobile) {
+            mapWidget.init($storeMapTarget, store);
+          }
+
+          return true;
+        });
+    }
+  };
+});

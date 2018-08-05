@@ -1,0 +1,600 @@
+/* globals define */
+/*
+  Purpose:
+    - UI controller for the flyout.
+
+  Dependencies
+    - Mustache
+    - jQuery
+    - THD Namespace
+*/
+(function closure(root, factory) {
+    if (typeof define === 'function' && define.amd) {
+        define('header.simpleflyout', ['jquery', 'mustache', 'header.data', 'header.analytics'],
+            function load(jQuery, Mustache, headerData, headerAnalytics) {
+                return factory(root, jQuery, Mustache, headerData, headerAnalytics);
+            });
+    } else {
+        // For non-AMD module, expose this to global (will also be useful for test cases)
+        /*eslint-disable*/
+        var _hfapp = THD.Utility.Namespace.createNamespace('THD.HFApp');
+        _hfapp.flyout = factory(root, jQuery, Mustache, THD.HFApp.data, THD.HFApp.analytics);
+        /*eslint-enable*/
+    }
+})(this, function factory(root, $, Mustache, headerData, headerAnalytics) {
+    var flyout = {};
+    var privateMethods = {};
+    var privateData = {};
+    var srData={};
+    var diyData = {};
+    var hsData = {};
+    var l1name, l2name;
+    privateMethods.templates = {};
+
+    privateMethods.templates.simpleList = '' +
+        '{{#allLink}} <a href="{{allLink}}"><span class="SimpleFlyout__header">{{name}}</span></a> {{/allLink}}' +
+        '{{^allLink}} <span class="SimpleFlyout__header">{{name}}</span> {{/allLink}}' +
+        '<div class="SimpleFlyout__divider"></div>' +
+        '<ul class="SimpleFlyout__list">' +
+        '{{#links}}' +
+        '<li class="SimpleFlyout__listItem">' +
+        '<a class="SimpleFlyout__link" href="{{url}}" title="{{name}}">{{name}}</a>' +
+        '</li>' +
+        '{{/links}}' +
+        '{{#allLink}}' +
+        '<li class="SimpleFlyout__listItem">' +
+        '<a data-type="direct" class="SimpleFlyout__link" href="{{allLink}}" title="View All" data-type="direct">View All {{name}}</a>' +
+        '</li>' +
+        '{{/allLink}}' +
+        '</ul>';
+
+    privateMethods.templates.diyandhslistlevel2 = '' +
+        '<div id="diyhslevel2" class="diyandhs">' +
+        '<span class="SimpleFlyout__header">{{name}}</span>' +
+        '<div class="SimpleFlyout__divider"></div>' +
+        '<ul class="SimpleFlyout__list">' +
+        '{{#links}}' +
+        '{{#hidel2level}}' +
+        '{{#sublinks}}' +
+        '{{^hidemobile}}' +
+        '<li class="SimpleFlyout__listItem">' +
+        '<a data-type="direct" class="SimpleFlyout__link" href="{{link}}" title="{{{title}}}">{{{title}}}</a>' +
+        '</li>' +
+        '{{/hidemobile}}' +
+        '{{/sublinks}}' +
+        '{{/hidel2level}}' +
+        '{{^hidel2level}}' +
+        '<li class="SimpleFlyout__listItem">' +
+        '<a class="{{linkClassName}}__link" href="{{link}}" title="{{{title}}}">{{{title}}}</a>' +
+        '</li>' +
+        '{{/hidel2level}}' +
+        '{{/links}}' +
+        '{{#viewAllLink}}' +
+        '<li class="SimpleFlyout__listItem">' +
+        '<a data-type="direct" class="SimpleFlyout__link" href="{{viewAllLink}}" title="View All">View All {{name}}</a>' +
+        '</li>' +
+        '{{/viewAllLink}}' +
+        '</ul>' +
+        '</div>';
+
+    privateMethods.templates.diyandhslistlevel3 = '' +
+        '<span class="SimpleFlyout__header">{{name}}</span>' +
+        '<div class="SimpleFlyout__divider"></div>' +
+        '<ul class="SimpleFlyout__list">' +
+        '{{#sublinks}}' +
+        '<li class="SimpleFlyout__listItem">' +
+        '<a data-type="direct" class="SimpleFlyout__link" href="{{link}}" title="{{{title}}}">{{{title}}}</a>' +
+        '</li>' +
+        '{{/sublinks}}' +
+        '{{#viewAllLink}}' +
+        '<li class="SimpleFlyout__listItem">' +
+        '<a data-type="direct" class="SimpleFlyout__link" href="{{viewAllLink}}" title="View All">View All {{name}}</a>' +
+        '</li>' +
+        '{{/viewAllLink}}' +
+        '</ul>';
+
+    /*
+     * Private Methods
+     */
+
+
+
+    privateMethods.logEventPath = function _logEventPath(type, pathArray) {
+        // Get header at the beginning, then join them all
+        return headerAnalytics.logEvent(type, ['header'].concat(pathArray).join('>'));
+    };
+    
+    privateMethods.logEventPathTaskLink = function _logEventPathTaskLink(event) {
+        var task_link_text = $(this).text().trim();
+        l1name = task_link_text;
+        privateMethods.logEventPath('header click', [task_link_text]);
+    };
+
+    privateMethods.logEventPathL3Link = function _logEventPathL3Link(event) {
+        var l3_link_text = $(this).text().trim();
+        var l2_class_name = event.target.attributes.class.value;
+        if(l2_class_name === "room__link"){
+            privateMethods.logEventPath('header click', [l1name, l3_link_text]);
+        } else {
+        privateMethods.logEventPath('header click', [l1name, l2name, l3_link_text]);
+        }
+    };
+    privateMethods.clearUrl = function _clearUrl(urlString) {
+        var result = urlString;
+
+        // Need to ensure this value isn't just a placeholder
+        // if it is, we need to remove the string so Mustache can tell.
+        if (result === '#') {
+            result = '';
+        }
+
+        return result;
+    };
+
+    privateMethods.openSimpleMenuLevel2 = function _openSimpleMenuLevel2(event) {
+        var $this = $(this);
+        var level1Data = $this.data();
+        var level1Url = $this.attr('href');
+        var level1Name = $this.text();
+        var requestLevel2Data;
+
+        event.preventDefault();
+
+        privateData.selectedLevel1 = level1Data.level;
+
+        requestLevel2Data = headerData.getLevel2Data(level1Data.level);
+
+        // If it worked
+        requestLevel2Data.then(function _renderLevel2Data(level2Data) {
+            var htmlContent = Mustache.render(privateMethods.templates.simpleList, {
+                links: level2Data,
+                allLink: privateMethods.clearUrl(level1Url),
+                name: level1Name
+            });
+
+            $('#simplePanelLevel2 .SimpleFlyout__container').html(htmlContent);
+            privateMethods.scrollToTop();
+            privateMethods.showSimplePanel(2);
+        });
+
+        // If it failed
+        requestLevel2Data.fail(function _level2DataLoadFailed() {
+            privateMethods.logEventPath('header click', ['all departments', level1Name])
+                .then(function _level2LogComplete() {
+                    // Go where we were going any way
+                    privateMethods.setLocation(level1Url);
+                });
+        });
+        requestLevel2Data.done(function _level2DataLoadSuccess() {
+            privateMethods.logEventPath('header click', ['all departments', level1Name]);
+        });
+    };
+
+    privateMethods.setLocation = function _setLocation(url){
+     window.location = url;
+  }
+
+    privateMethods.openSimpleMenuLevel3 = function _openSimpleMenuLevel3(event) {
+        var $this = $(this);
+        var level1Name = privateData.selectedLevel1;
+        var level2Name = $this.text();
+        var level2Url = $this.attr('href');
+        var requestLevel3Data;
+
+        privateData.selectedLevel2 = level2Name;
+
+        // if this isn't direction
+        if (($this.data('type') !== 'direct')) {
+            event.preventDefault();
+
+            // request the data
+            requestLevel3Data = headerData.getLevel3Data(level1Name, level2Name);
+
+            // If it worked
+            requestLevel3Data.then(function _renderLevel3Data(level3Data) {
+                // render this thing
+                var htmlContent = Mustache.render(privateMethods.templates.simpleList, {
+                    links: level3Data,
+                    allLink: privateMethods.clearUrl(level2Url),
+                    name: level2Name
+                });
+
+                // put it in the DOM
+                $('#simplePanelLevel3 .SimpleFlyout__container').html(htmlContent);
+                privateMethods.scrollToTop();
+                // Show the panel
+                privateMethods.showSimplePanel(3);
+            });
+
+            // If it failed - could be that the index doesn't exist, or that its got no results
+            requestLevel3Data.fail(function _level3DataLoadFailed() {
+                privateMethods.logEventPath('header click', ['all departments', level1Name, level2Name])
+                    .then(function _level3LogComplete() {
+                        // Go where we were going any way
+                        window.location = level2Url;
+                    });
+            });
+            requestLevel3Data.done(function _level3DataLoadSuccess() {
+                privateMethods.logEventPath('header click', ['all departments', level1Name, level2Name]);
+            });
+
+        } else {
+            // This is a direct link so log it now
+            privateMethods.logEventPath('header click', ['all departments', level1Name, level2Name]);
+        }
+    };
+
+    privateMethods.handleMenuLevel4 = function _handleMenuLevel4() {
+        var $this = $(this);
+        var level1Name = privateData.selectedLevel1;
+        var level2Name = privateData.selectedLevel2;
+
+        privateMethods.logEventPath('header click', ['all departments', level1Name, level2Name, $this.text().toLowerCase()]);
+    };
+
+    privateMethods.simpleMenuBack = function _simpleMenuBack(event) {
+        if (event && event.type === 'touchend') {
+            // prevent default to stop click firing for touch events
+            event.preventDefault();
+        }
+        privateMethods.scrollToTop();
+        // strangely, event is explicitly needed for FF but not for others...
+        privateMethods.showSimplePanel($(event.target).data('level'));
+    };
+
+    // privateMethods.triggerHoverintent = function _triggerHoverIntent() {
+    //   $(this).trigger({
+    //     type: 'hoverintent',
+    //     target: this
+    //   });
+    // };
+
+    privateMethods.notifyMenuState = function _notifyMenuState(state) {
+        // Use a namespaced event, pass along the state
+        $(document).trigger('menuState', [{
+            isOpen: state,
+            menu: 'simple'
+        }]);
+    };
+
+    privateMethods.showSimpleFlyout = function _showSimpleFlyout(event, open) {
+        var menuShown = (typeof open === 'undefined') ? true : open;
+        var $button = $('#simpleMenuButton');
+
+        privateMethods.notifyMenuState(menuShown);
+
+        // toggle the menu state
+        $('#simpleFlyout').toggleClass('SimpleFlyout--closed', !menuShown);
+
+        // Togle the button state... its complicated
+        $button.find('.SimpleMenu__close').toggleClass('SimpleMenu__close--open', menuShown);
+        $button.find('.SimpleMenu__menu').toggleClass('SimpleMenu__menu--closed', menuShown);
+
+        // reset the panel to the beginning
+        privateMethods.showSimplePanel(0);
+
+        if (menuShown) {
+            // close the tooltips in case they are open
+            $(document).trigger('closeHeaderTooltips');
+            $(document).trigger('closeAllMenus');
+            // show the masking layer if appropriate
+            $(document).trigger('headerMask-show', menuShown);
+        } else {
+            $(document).trigger('headerMask-show', menuShown);
+        }
+    };
+
+    privateMethods.toggleSimpleFlyout = function _toggleSimpleFlyout(event) {
+        var $simpleMenu = $('#simpleFlyout');
+        var simpleMenuOpen = !(!$simpleMenu.hasClass('SimpleFlyout--closed'));
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        privateMethods.showSimpleFlyout(event, simpleMenuOpen);
+    };
+
+    privateMethods.preventMaskClose = function _preventMaskClose(event) {
+        event.stopPropagation();
+    };
+
+    privateMethods.scrollToTop = function _scrollToTop() {
+        $(window).scrollTop(0);
+    };
+
+    privateMethods.diyhsHelper = function _diyhsHelper(allLinks, level1Url, level1Name) {
+        if (allLinks && allLinks.length) {
+            allLinks.filter(function(config, index) {
+                return config.title === level1Name && config.sublinks;
+            }).map(function(currentLink) {
+                var htmlContent = Mustache.render(privateMethods.templates.diyandhslistlevel3, {
+                    sublinks: currentLink.sublinks,
+                    name: level1Name,
+                    viewAllLink: level1Url
+                });
+                $('#simplePanelLevel2 .SimpleFlyout__container').html(htmlContent);
+                privateMethods.scrollToTop();
+                privateMethods.showSimplePanel(2);
+            });
+        }
+    };
+
+    privateMethods.openDiyHsMenuLevel2 = function _openDiyHsMenuLevel2(event) {
+        var $this = $(this);
+        var level1Data = $this.data();
+        var level1Url = $this.attr('href');
+        var level1Name = $this.text();
+        var level1Class = $this.attr('class');
+        var allLinks;
+
+        if (($this.data('type') !== 'direct')) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            // if class is diy__link pass DIY Flyout data
+            if (level1Class.indexOf('diy__link') != -1) {
+                allLinks = diyData.diyflyout.links;
+            } else if (level1Class.indexOf('hs__link') != -1) {
+                allLinks = hsData.hsflyout.links;
+            }
+
+            privateMethods.diyhsHelper(allLinks, level1Url, level1Name);
+            l2name = level1Name;
+            privateMethods.logEventPath('header click', [l1name, level1Name]);
+        } else {
+            privateMethods.logEventPath('header click', [level1Name, $(event.target).text().toLowerCase()]);
+        }
+    };
+    
+    privateMethods.constructSRFlyoutL1 = function _constructSRFlyoutL1(event, response) {
+        var paneltitle = $(event.target).text();
+        var viewallurl = $(event.target).attr('href');
+        var currHeader = $('#simplePanelLevel1 span').text();
+        var htmlContent;
+
+        srData = $.extend(true, response);
+        srData.shopbyroomflyout.name = paneltitle;
+        srData.shopbyroomflyout.linkClassName = 'room';
+        htmlContent = Mustache.render(privateMethods.templates.diyandhslistlevel2, srData.shopbyroomflyout);
+        $('#simplePanelLevel1 span, #simplePanelLevel1 div.SimpleFlyout__divider:eq(1)').hide();
+        $('#simplePanelLevel1').append(htmlContent);
+    };
+
+    privateMethods.showSRFlyout = function _showSRFlyout(event) {
+        var jsonPath = '/hdus/en_US/DTCCOMNEW/fetch/ShopByRoom-C10.json';
+        var level1Name = $(event.target).text();
+        var paneltitle = $(event.target).text();
+        var ddoText = paneltitle.toLowerCase();
+
+        // do not redirect the user to href link
+        if ($(event.target).data('type') !== 'direct') {
+            event.preventDefault();
+
+            $('.diyandhs').remove();
+            $('#simplePanelLevel1 .SimpleFlyout__list').hide();
+
+            // Only make a call if `diydata` is not available
+            if (!srData.hasOwnProperty('shopbyroomflyout')) {
+                headerData.getEtchJSON(jsonPath)
+                    .then(privateMethods.constructSRFlyoutL1.bind(null, event));
+            } else {
+                privateMethods.constructSRFlyoutL1(event, srData);
+            }
+            privateMethods.scrollToTop();
+            privateMethods.showSimplePanel(1);
+            $(document).trigger('closeHeaderTooltips');
+        } else { // redirect the user to href link & log the details
+            privateMethods.logEventPath('header click', [level1Name, ddoText]);
+        }
+    };
+    
+    privateMethods.constructDiyFlyoutL1 = function _constructDiyFlyoutL1(event, response) {
+        var paneltitle = $(event.target).text();
+        var viewallurl = $(event.target).attr('href');
+        var currHeader = $('#simplePanelLevel1 span').text();
+        var htmlContent;
+
+        diyData = $.extend(true, response);
+        diyData.diyflyout.name = paneltitle;
+        diyData.diyflyout.linkClassName = 'diy';
+        diyData.diyflyout.viewAllLink = viewallurl;
+        htmlContent = Mustache.render(privateMethods.templates.diyandhslistlevel2, diyData.diyflyout);
+        $('#simplePanelLevel1 span, #simplePanelLevel1 div.SimpleFlyout__divider:eq(1)').hide();
+        $('#simplePanelLevel1').append(htmlContent);
+    };
+
+    privateMethods.showDiyFlyout = function _showDiyFlyout(event) {
+        var jsonPath = '/hdus/en_US/DTCCOMNEW/fetch/diyflyout.json';
+        var level1Name = $(event.target).text();
+        var paneltitle = $(event.target).text();
+        var ddoText = paneltitle.toLowerCase();
+
+        // do not redirect the user to href link
+        if ($(event.target).data('type') !== 'direct') {
+            event.preventDefault();
+
+            $('.diyandhs').remove();
+            $('#simplePanelLevel1 .SimpleFlyout__list').hide();
+
+            // Only make a call if `diydata` is not available
+            if (!diyData.hasOwnProperty('diyflyout')) {
+                headerData.getEtchJSON(jsonPath)
+                    .then(privateMethods.constructDiyFlyoutL1.bind(null, event));
+            } else {
+                privateMethods.constructDiyFlyoutL1(event, diyData);
+            }
+            privateMethods.scrollToTop();
+            privateMethods.showSimplePanel(1);
+            $(document).trigger('closeHeaderTooltips');
+        } else { // redirect the user to href link & log the details
+            privateMethods.logEventPath('header click', [level1Name, ddoText]);
+        }
+    };
+
+    privateMethods.constructHSFlyoutL1 = function _constructHSFlyoutL1(event, response) {
+        var paneltitle = $(event.target).text();
+        var viewallurl = $(event.target).attr('href');
+        var currHeader = $('#simplePanelLevel1 span').text();
+        var htmlContent;
+
+        hsData = $.extend(true, response);
+        hsData.hsflyout.name = paneltitle;
+        hsData.hsflyout.linkClassName = 'hs';
+        hsData.hsflyout.viewAllLink = viewallurl;
+        htmlContent = Mustache.render(privateMethods.templates.diyandhslistlevel2, hsData.hsflyout);
+        $('#simplePanelLevel1 span, #simplePanelLevel1 div.SimpleFlyout__divider:eq(1)').hide();
+        $('#simplePanelLevel1').append(htmlContent);
+    };
+
+    privateMethods.showHSFlyout = function _showHSFlyout(event) {
+        var jsonPath = '/hdus/en_US/DTCCOMNEW/fetch/hsflyout.json';
+        var level1Name = $(event.target).text();
+        var paneltitle = $(event.target).text();
+        var ddoText = paneltitle.toLowerCase();
+
+        // do not redirect the user to href link
+        if ($(event.target).data('type') !== 'direct') {
+            event.preventDefault();
+            $('.diyandhs').remove();
+            $('#simplePanelLevel1 .SimpleFlyout__list').hide();
+
+            // Only make a call if `hsdata` is not available
+            if (!hsData.hasOwnProperty('hsFlyout')) {
+                headerData.getEtchJSON(jsonPath)
+                    .then(privateMethods.constructHSFlyoutL1.bind(null, event));
+            } else {
+                privateMethods.constructDiyFlyoutL1(event, hsData);
+            }
+            privateMethods.scrollToTop();
+            privateMethods.showSimplePanel(1);
+            $(document).trigger('closeHeaderTooltips');
+        } else { // redirect the user to href link & log the details
+            privateMethods.logEventPath('header click', [level1Name, ddoText]);
+        }
+    };
+
+    privateMethods.showAllDeptartmentsFlyout = function _showAllDeptartmentsFlyout(event) {
+        var paneltitle = $(event.target).text();
+        var viewallurl = $(event.target).attr('href');
+        var currHeader = $('#simplePanelLevel1 span').text();
+        var htmlContent;
+        var ddoText = paneltitle.toLowerCase();
+
+        // do not redirect the user to href link
+        if ($(event.target).data('type') !== 'direct') {
+            event.preventDefault();
+            $('.diyandhs').remove();
+            $('#simplePanelLevel1 .SimpleFlyout__list').show();
+            $('#simplePanelLevel1 span, #simplePanelLevel1 div.SimpleFlyout__divider:eq(1)').show();
+            privateMethods.scrollToTop();
+            privateMethods.showSimplePanel(1);
+            $(document).trigger('closeHeaderTooltips');
+        } else { // the below log event needs to be in an else block
+            privateMethods.logEventPath('header click', ['all departments', $(event.target).text().toLowerCase()]);
+        }
+    };
+
+    privateMethods.interactWithSimpleMenuLink = function _interactWithSimpleMenuLink(event) {
+        var flyoutID = $(event.target).attr('data-id');
+
+        if (flyoutID) {
+            event.preventDefault();
+
+            switch (flyoutID) {
+                case 'departmentsFlyout':
+                    privateMethods.showAllDeptartmentsFlyout(event);
+                    break;
+                    
+                case 'room':
+                    privateMethods.showSRFlyout(event);
+                    break;
+                    
+                case 'diyProjectsIdeas':
+                    privateMethods.showDiyFlyout(event);
+                    break;
+
+                case 'homeServices':
+                    privateMethods.showHSFlyout(event);
+                    break;
+
+                default:
+                    break;
+            }
+        }
+    };
+
+    privateMethods.showSimplePanel = function _showSimplePanel(level) {
+        var thisLevel = parseInt(level, 10);
+
+        $('#simpleFlyout').find('.SimpleFlyout__wrapper')
+            .toggleClass('SimpleFlyout__wrapper--level1', (thisLevel === 1))
+            .toggleClass('SimpleFlyout__wrapper--level2', (thisLevel === 2))
+            .toggleClass('SimpleFlyout__wrapper--level3', (thisLevel === 3));
+    };
+
+    privateMethods.closeOnSearchOpen = function _closeOnSearchOpen(event, isOpen) {
+        if (isOpen) {
+            privateMethods.showSimpleFlyout(event, false);
+        }
+    };
+
+    /**
+     * Captures the path traversed by the user on click of the headers in L2 and L3.
+     * This is used for analytics. And logs the path
+     */
+
+    privateMethods.capturePath = function _capturePath() {
+        var $this = $(this);
+        var path = ['all departments', privateData.selectedLevel1];
+        privateData.selectedLevel2 !== undefined && path.push(privateData.selectedLevel2);
+        path.push($this.text());
+        privateMethods.logEventPath('header click', path);
+    }
+
+    // bind to all the necessary elements
+    privateMethods.initialize = function initialize() {
+        // delegate to all the things
+        $(document)
+            .on('click touchend', '#simpleMenuButton', privateMethods.toggleSimpleFlyout)
+            .on('click touchend', '#simpleFlyout', privateMethods.preventMaskClose)
+            .on('click touchend', '#simpleFlyout .SimpleFlyout__back', privateMethods.simpleMenuBack)
+            .on('click', '#simplePanelMain', privateMethods.interactWithSimpleMenuLink)
+            .on('click', '#simplePanelLevel1 .SimpleFlyout__link', privateMethods.openSimpleMenuLevel2)
+            .on('click', '#simplePanelLevel2 .SimpleFlyout__link', privateMethods.openSimpleMenuLevel3)
+            .on('click', '#simplePanelLevel3 .SimpleFlyout__link', privateMethods.handleMenuLevel4)
+            .on('click', '#diyhslevel2 .diy__link, #diyhslevel2 .hs__link' , privateMethods.openDiyHsMenuLevel2)
+            .on('click', '#simplePanelLevel2 .SimpleFlyout__container .SimpleFlyout__list li.SimpleFlyout__listItem a.SimpleFlyout__link, #diyhslevel2 .room__link', privateMethods.logEventPathL3Link)
+            .on('click', '#simplePanelMain .SimpleFlyout__list li.SimpleFlyout__listItem a.SimpleFlyout__link', privateMethods.logEventPathTaskLink)
+            .on('showSimpleFlyout', privateMethods.showSimpleFlyout)
+            .on('click touchend', '#simplePanelLevel2 .SimpleFlyout__header', privateMethods.capturePath)
+            .on('click touchend', '#simplePanelLevel3 .SimpleFlyout__header', privateMethods.capturePath)
+            .on('searchState', privateMethods.closeOnSearchOpen)
+        // .hoverIntent({
+        //   selector: '.Header3',
+        //   over: privateMethods.triggerHoverintent,
+        //   out: $.noop
+        // });
+    };
+
+    /*
+     * Public Methods
+     */
+
+    flyout.init = function init() {
+        // Do it before ready - cause we rock
+        privateMethods.initialize();
+
+        // start loading the data now.
+        headerData.init();
+
+        headerAnalytics.init();
+
+        return this;
+    };
+
+    flyout.getPrivateMethods = function getPrivateMethods() {
+        return privateMethods;
+    };
+
+    return flyout;
+});

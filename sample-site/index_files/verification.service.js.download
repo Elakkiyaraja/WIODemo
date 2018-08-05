@@ -1,0 +1,233 @@
+(function closure(root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define([
+      'jquery',
+      'verification.modal',
+      'cookie-utils',
+      'verification.helper',
+      'account.utility',
+      'verification.utility',
+      'verification.analytics',
+      'verification.constants'
+    ], function load(jQuery, verificationModal, cookieUtils, verificationHelper, accountUtility, verificationUtil, verificationAnalytics, constants) {
+      return factory(root, jQuery, verificationModal, cookieUtils, verificationHelper, accountUtility, verificationUtil, verificationAnalytics, constants);
+    })
+  } else {
+    factory(root, jQuery, verificationModal, cookieUtils, verificationHelper, accountUtility, verificationUtil, verificationAnalytics, constants);
+  }
+})(this, function factory(root, $, verificationModal, cookieUtils, verificationHelper, accountUtility, verificationUtil, verificationAnalytics, CONSTANTS) {
+  var phoneNumber = null,
+    svocId = null,
+    emailId = null,
+    channelId = null,
+    authorizationToken = null,
+    otpResponse = null,
+    isMobile = false,
+    profileResp = {},
+    authID = '',
+    backendHost = '',
+    customerID = '',
+    hat = null,
+    twoFactorSuccessCallback = null,
+    $bannerPhoneInput = null,
+    $resendResponseMessage = null,
+    $verificationInput = null,
+    $verifyOTP = '',
+    $verificationButton = null;
+
+  var bindPhoneVerificationFlow = function() {
+    /**
+     * Description: Called when user initiates the verification flow
+     */
+    $(document).on('triggerVerification', function(event) {
+      var payload = event.detail || event.originalEvent.detail;
+      phoneNumber = payload.phoneNumber;
+      svocId = payload.svocId || cookieUtils.getSVOCID();
+      emailId = payload.emailId;
+      isMobile = payload.isMobile;
+      channelId = isMobile ? '2' : '1';
+      authorizationToken = accountUtility.getAuthorizationToken();
+      profileResp = payload.profilePhone || {};
+
+      verificationAnalytics.onClickVerifyPhoneShowModal(payload.origin);
+      verificationUtil.getVerifyPhoneOTP(phoneNumber, svocId, emailId, channelId, authorizationToken)
+        .done(function(response) {
+          otpResponse = response;
+          verificationModal.renderTemplateModal('verifyPhone', phoneNumber, isMobile);
+          isMobile ? verificationAnalytics.onLoadVerifyPhoneModalMW() : verificationAnalytics.onLoadVerifyPhoneModalDW();
+
+          $bannerPhoneInput = $('#verify-phone-banner-input');
+          $resendResponseMessage = $('#resend__response-message').css('display', 'none');
+          $verificationInput = $('#form-input-verification');
+          $verificationButton = $('#verification-code-submit');
+          $verifyOTP = $('#verification-code').val();
+
+          verificationModal.setOnSubmitListener(onSubmitVerifyPhone);
+          verificationModal.setResendCodeListener(onSubmitResendCode, verificationAnalytics.onClickVerifyPhoneResend);
+          verificationHelper.onSuccessHideLoader();
+        })
+        .fail(function(error) {
+          verificationHelper.onFailureHideLoader();
+
+          // this implementation needs to be more elegant
+          // instead of the naive approach, need to trigger angular validation from customer-ui
+          $bannerPhoneInput.parent().addClass('form-input--error');
+          $bannerPhoneInput.siblings()
+            .addClass('form-input-error__message')
+            .text(CONSTANTS.ERRORS.BANNER_INTERNAL_ERR);
+
+          var analyticErrors = {
+            errorType: "error",
+            displayType: "inline",
+            pageSection: "verify phone",
+            errorMessage: CONSTANTS.ERRORS.BANNER_INTERNAL_ERR,
+            code: error.identity.errors[0].errorCode
+          };
+
+          verificationAnalytics.setErrorEvent(analyticErrors)
+        });
+
+      var onSubmitResendCode = function() {
+        verificationHelper.showResendSpinner();
+        verificationUtil.getVerifyPhoneOTP(phoneNumber, svocId, emailId, channelId, authorizationToken)
+          .done(function(data) {
+            otpResponse = data;
+            verificationHelper.hideResendSpinner();
+            verificationHelper.renderOnSuccessResendResponse($verificationButton, $verifyOTP);
+          })
+          .fail(function(error) {
+            verificationHelper.hideResendSpinner();
+            verificationHelper.renderOnFailureResendResponse($verificationButton, $verifyOTP);
+          });
+      };
+
+      var onSubmitVerifyPhone = function() {
+        $verifyOTP = $('#verification-code').val();
+        var verifyPhoneRequest = verificationHelper.generateVerifyPhoneRequest(otpResponse, $verifyOTP, phoneNumber, emailId, profileResp);
+
+        verificationUtil.validateVerifyPhoneOTP(channelId, svocId, authorizationToken, verifyPhoneRequest)
+          .then(function(response) {
+            if (response.phoneVerified) {
+              verificationModal.hideModal();
+              verificationHelper.verificationSuccess(response);
+              verificationAnalytics.onSuccessVerifyPhoneFlow();
+
+              $('#verification-alert').css('display', 'block');
+            }
+          }, function(error) {
+            $('#verification-code-submit')
+              .find('.bttn__content')
+              .empty()
+              .text("Verify");
+            var errorCode = error.responseJSON && error.responseJSON.errors[0].errorCode;
+            if (!(errorCode === "AUTH_ERR_125" || errorCode === "AUTH_ERR_104")) {
+              $verificationButton.removeClass('disabled');
+            }
+            var errorText = verificationHelper.getErrorMessage(errorCode);
+            verificationHelper.renderErrorVerifyPhoneOTP(errorText);
+
+            var analyticErrors = {
+              "errorType": "error",
+              "displayType": "inline",
+              "pageSection": "verify phone",
+              "errorMessage": errorText,
+              "code": errorCode
+            };
+
+            verificationAnalytics.setErrorEvent(analyticErrors)
+          })
+      };
+    });
+  };
+
+  var bindTwoFactorAuthFlow = function() {
+    $(document).on('triggerTwoFactorVerification', function(event) {
+      var payload = event.detail || event.originalEvent.detail;
+      emailId = payload.email;
+      authID = payload.authID;
+      backendHost = payload.backendHost;
+      customerID = payload.customerID;
+
+      var verify2FAViaText = payload.sentViaText;
+      var phoneNumber = payload.phoneNumber;
+      isMobile = payload.isMobile;
+      hat = payload.hat;
+      twoFactorSuccessCallback = payload.successCallback;
+      var title = verify2FAViaText ? 'verify2FactorText' : 'verify2FactorEmail';
+      var input2FA = verify2FAViaText ? phoneNumber : emailId;
+
+      channelId = isMobile ? '2' : '1';
+
+			verificationModal.renderTemplateModal(title, input2FA, isMobile);
+      $('#verification-legal').remove();
+      /**
+       * remove the resend code dom element
+       */
+      $('.resend__help-message').remove();
+      $bannerPhoneInput = $('#verify-phone-banner-input');
+      $resendResponseMessage = $('#resend__response-message');
+      $verificationInput = $('#form-input-verification');
+      $verificationButton = $('#verification-code-submit');
+
+      $resendResponseMessage.css('display', 'none');
+      // generator and render the template
+
+      var onSubmitVerifyEmail = function() {
+        $verifyOTP = $('#verification-code').val();
+        var request = verificationHelper.generateVerify2FactorRequest(authID, backendHost, customerID, emailId, $verifyOTP);
+
+        // add a sppiner logic
+        verificationUtil.validateOTP(request, hat, channelId)
+          .then(function() {
+            twoFactorSuccessCallback();
+          }, function(err) {
+            var $verificationButtonText = $verificationButton.find('.bttn__content');
+            $verificationButtonText.empty().text("Verify");
+            var errorCode = err.responseJSON && err.responseJSON.errors[0].errorCode;
+            var errorMessage = verificationHelper.getErrorMessage(errorCode, true);
+            verificationHelper.renderErrorVerifyPhoneOTP(errorMessage);
+            var analyticErrors = {
+                "errorType": "error",
+                "displayType": "inline",
+                "pageSection": "two factor authentication overlay",
+                "errorMessage": errorMessage,
+                "code": errorCode
+              };
+
+              verificationAnalytics.setErrorEvent(analyticErrors)
+          });
+      };
+
+      var onSubmitResendEmail = function() {
+        verificationHelper.showResendSpinner();
+        verificationUtil.getVerifyEmailOTP(emailId, channelId, hat)
+          .done(function(data) {
+            otpResponse = data;
+            authID = data.authId;
+            backendHost = data.backendHostName;
+            verificationHelper.hideResendSpinner();
+            var successMessage = "Code resent. It may take a minute to receive your code.";
+            verificationHelper.renderOnSuccessResendResponse($verificationButton, $verifyOTP, successMessage);
+          })
+          .fail(function(error) {
+            verificationHelper.hideResendSpinner();
+            verificationHelper.renderOnFailureResendResponse($verificationButton, $verifyOTP);
+          });
+      };
+
+      /**
+       * Removed re-sending an OTP code for 2FA through email.
+       */
+
+      // verificationModal.setResendCodeListener(onSubmitResendEmail);
+      verificationModal.setOnSubmitListener(onSubmitVerifyEmail);
+    })
+  };
+
+  return {
+    init: function() {
+      bindPhoneVerificationFlow();
+      bindTwoFactorAuthFlow();
+    }
+  }
+});

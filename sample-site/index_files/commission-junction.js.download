@@ -1,0 +1,18 @@
+define('commission-junction', ['utils.url', 'cookie-utils'], function commissionJunction(utilsURL, cookieUtils) {
+	return {
+		updateCJInfo: function updateCJInfo() {
+			if(window.location.href.indexOf('cj=true') === -1) return;
+
+			var params = utilsURL.get();
+			var aid = params.AID || '';
+			var sid = params.SID || '';
+			var pid = params.PID || '';
+			var cj = params.cj || '';
+		    var CJValue = 'AID=' + aid + '#SID=' + sid + '#PID=' + pid + '#cj=' + cj; 
+		    var date = new Date();
+		    date.setTime(date.getTime() + 2592000000);
+		    var expires = '; expires=' + date.toGMTString();
+		    document.cookie = 'CJInfo=' + CJValue + expires + ';domain=' + cookieUtils.getCurrentDomain() + ';path=/';
+		}
+	};
+});

@@ -1,0 +1,403 @@
+/* ---------------------------------------------------------------------------------------
+	THD Global Modal Module
+-----------------------------------------------------------------------------------------*/
+// thd.applAtcOverlay
+// thd.applChangeZipCode
+'use strict';
+(function closure(root, factory) {
+	if(typeof define === 'function' && define.amd) {
+		define(['jquery', 'global.namespace', 'global.utility', 'digitalData', 'localizationPopup', 'cookie-utils', 'jquery-fancybox'],
+			function load($, THD, globalUtility, digitalData, localizationPopup, cookieUtils) {
+				return factory(root, $, THD, globalUtility, digitalData, localizationPopup, cookieUtils);
+			});
+	} else{
+		// For non-AMD module, expose this to global (will also be useful for test cases)
+		/* eslint-disable*/
+		factory(root, jQuery, THD, THD.Global.Config, digitalData, localizationPopup, cookieUtils);
+		/*eslint-enable*/
+	}
+})(this, function factory(root, $, THD, globalUtility, digitalDataWrapper, localizationPopup, cookieUtils) {
+	var currentStore;
+	var newStore;
+	var theHref;
+	var overlayConfig;
+	var emailDirectionsFrame = '';
+	var thdAnalyticsEvent = {};
+	var privateMethods = {};
+	
+	
+	THD.Global.overlayConfigs = {};// public use to access the configs
+	overlayConfig = THD.Global.overlayConfigs;
+
+
+	// Generic Modal Config.
+	overlayConfig.default = {
+		'autoDimensions': true,
+		'autoSize': false,
+		'centerOnScroll': true,
+		'enableEscapeButton': true,
+		'height': 'auto',
+		'hideOnOverlayClick': true,
+		'margin': 0,
+		'modal': false,
+		'overlayColor': '#666',
+		'overlayOpacity': 0.7,
+		'padding': 0,
+		'scrolling': 'no',
+		'showCloseButton': false,
+		'titleShow': false,
+		'showNavArrows': false,
+		'transitionIn': 'none',
+		'transitionOut': 'none',
+		'width': 'auto'
+	};
+
+	// Directions Email Module.
+	overlayConfig.modal = $.extend(true, {}, overlayConfig.default, {
+		'autoDimensions': false,
+		'width': 766,
+		'padding': 15,
+		'showCloseButton': true
+	});
+
+	// Quickview Overlay Config.
+	overlayConfig.quickview = $.extend(true, {}, overlayConfig.default, {
+		'width': 928,
+		'height': 510,
+		'modal': false,
+		'centerOnScroll': false,
+		'showCloseButton': true,
+		'overlayOpacity': 0,
+		'type': 'iframe',
+		'href': theHref
+	});
+
+	// Localization popUp Overlay Config.
+	overlayConfig.localizationModule = $.extend(true, {}, overlayConfig.default, {
+		'width': 680,
+		'height': 630,
+		'type': 'inline',
+		'enableEscapeButton': true,
+		'centerOnScroll': true,
+		'overlayColor': '#666',
+		'overlayOpacity': 0.7,
+		'overlayShow': true,
+		'showCloseButton': true,
+		'onStart': function onStart() {
+			var urlHostName = window.location.hostname;
+			var urlHostNameSplit = [];
+			urlHostNameSplit = urlHostName.split('.');
+			if ((urlHostNameSplit[0] !== 'www' && urlHostNameSplit[1] === 'homedepot')
+				|| urlHostNameSplit.indexOf('dev-blinds') > -1
+				|| urlHostNameSplit.indexOf('qa-blinds') > -1
+				|| urlHostNameSplit.indexOf('uat-blinds') > -1
+				|| urlHostNameSplit.indexOf('stage-blinds') > -1
+				|| urlHostNameSplit.indexOf('blinds') > -1) {
+				window.location = 'http://www.homedepot.com/StoreFinder/index.jsp';
+				return false;
+			}
+
+			var	digitalData = digitalDataWrapper.get();
+			
+			// DDO for Success
+			thdAnalyticsEvent = {
+				category: {
+					primaryCategory: 'overlay'
+				},
+				eventInfo: {
+					eventName: 'change your local store'
+				}
+			};
+
+			if(typeof digitalData !== 'undefined' && digitalData.hasOwnProperty('event')) {
+				digitalData.event.push(thdAnalyticsEvent);
+			}
+			localizationPopup.startLocalizationProcess();
+		}
+	});
+
+	// Canadian message popUp Overlay Config.
+	overlayConfig.canadaMessageModule = $.extend(true, {}, overlayConfig.default, {
+		'width': 680,
+		'height': 630,
+		'type': 'inline',
+		'enableEscapeButton': true,
+		'centerOnScroll': true,
+		'overlayColor': '#666',
+		'overlayOpacity': 0.7,
+		'showCloseButton': true
+	});
+
+	// Directions Email Module.
+	overlayConfig.directionsEmailModule = $.extend(true, {}, overlayConfig.default, {
+		'width': 700,
+		'height': 600,
+		'type': 'inline',
+		'enableEscapeButton': true,
+		'centerOnScroll': true,
+		'overlayColor': '#666',
+		'overlayOpacity': 0.7,
+		'overlayShow': true,
+		'showCloseButton': true,
+		'onStart': function onStart() {
+			emailDirectionsFrame = $('#emailDirections').clone();
+			$('#edItinerary').html($('#directionsItinerary').html());
+			$('#directions-header').val($('#directionsItinerary').html());
+		},
+		'onClosed': function onClosed() {
+			$('#emailDirectionsModal').html(emailDirectionsFrame);
+		}
+	});
+
+	overlayConfig.quickOrder = $.extend(true, {}, overlayConfig.default, {
+		'width': 841,
+		'autoSize': false,
+		'height': 685,
+		'padding': 0,
+		'href': theHref,
+		'type': 'iframe',
+		'autoScale': false
+	});
+
+	// Email SignUp
+	overlayConfig.emailSignUp = $.extend(true, {}, overlayConfig.default, {
+		'width': 350,
+		'height': 150,
+		'type': 'iframe',
+		'href': theHref,
+		'centerOnScroll': true,
+		'overlayShow': true,
+		'showCloseButton': true
+	});
+
+	// Video Overlay
+	overlayConfig.videoOverlay = $.extend(true, {}, overlayConfig.default, {
+		'autoDimensions': true,
+		'width': 'auto',
+		'height': 'auto',
+		'centerOnScroll': true,
+		'overlayShow': true,
+		'showCloseButton': true
+	});
+
+	// Email Overlay
+	overlayConfig.email = $.extend(true, {}, overlayConfig.default, {
+		'width': 478,
+		'height': 440,
+		'cache': false,
+		'enableEscapeButton': true,
+		'showCloseButton': true,
+		'href': theHref,
+		'modal': false,
+		'centerOnScroll': false,
+		'overlayColor': '#666',
+		'overlayOpacity': 0.7,
+		'type': 'iframe'
+	});
+
+	// Gallery Overlay Config.
+	overlayConfig.gallery = $.extend(true, {}, overlayConfig.default, {
+		'width': 898,
+		'height': 601,
+		'type': 'iframe',
+		'showCloseButton': true,
+		'href': theHref
+	});
+
+	// Bopis 2 Overlay Config.
+	overlayConfig.bopis = $.extend(true, {}, overlayConfig.default, {
+		'padding': 15,
+		'width': 795,
+		'height': 710,
+		'type': 'iframe',
+		'modal': false,
+		'href': theHref,
+		'overlayOpacity': 0,
+		'centerOnScroll': false,
+		'showCloseButton': true,
+		'onStart': function onStart() {
+			$.fancybox.showActivity();
+			$('#fancybox-wrap').addClass('invisible');
+			if($('#fancybox-wrap').is(':visible')) {
+				$('#fancybox-wrap').css({'visibility': 'hidden'});
+			}
+		},
+		'onComplete': function onComplete() {
+			$.fancybox.showActivity();
+			currentStore = cookieUtils.getStoreNum();
+
+			$('#fancybox-frame').load(function load() {
+				$.fancybox.hideActivity();
+				$('#fancybox-wrap').css({'visibility': 'visible'}).removeClass('invisible');
+			});
+		},
+		'onClosed': function onClosed() {
+			newStore = cookieUtils.getStoreNum();
+			if ( newStore !== currentStore ) {
+				window.location.reload();
+			}
+		}
+	});
+
+	// Quickview Overlay Config.
+	overlayConfig.content = $.extend(true, {}, overlayConfig.default, {
+		'autoDimensions': false,
+		'width': 766,
+		'type': 'ajax',
+		'href': theHref,
+		'showCloseButton': true,
+		'onComplete': function onComplete() {
+			$.fancybox.showActivity();
+			$('#fancybox-wrap').css({'visibility': 'hidden'});
+
+			setTimeout(function to() {
+				var $fbContent = $('#fancybox-content');
+				var $dctmContentOverlay = $('#dctm_content_overlay');
+
+				$fbContent.find('.pod').css({'height': 'auto'});
+				window.fixPodHeights();
+
+				$dctmContentOverlay.parent().css({'height': 'auto'});
+				$fbContent.css({'height': 'auto'});
+
+				$.fancybox.hideActivity();
+				$('#fancybox-wrap').css({'visibility': 'visible'});
+			}, 1500);
+		}
+	});
+
+	// Generic Overlay Trigger for most modals
+	privateMethods.overlayTrigger = function overlayTrigger(e) {
+		var $this = $(this);
+		var theRel = $this.attr('rel').toLowerCase();
+		var useConfig;
+		e.preventDefault();
+
+		switch (theRel) {
+		case 'directionsemailmodule': useConfig = overlayConfig.directionsEmailModule; break;
+		case 'localizationmodule': $(document).trigger('launchLocOverlay'); break;
+		case 'bopis': useConfig = overlayConfig.bopis; break;
+		case 'quickview': useConfig = overlayConfig.quickview; break;
+		case 'gallery': useConfig = overlayConfig.gallery; break;
+		case 'email': useConfig = overlayConfig.email; break;
+		case 'modal': useConfig = overlayConfig.modal; break;
+		case 'content': useConfig = overlayConfig.content; break;
+		default : useConfig = overlayConfig.content;
+		}
+
+		// get the href for fancybox
+		theHref = $this.attr('href');
+		// if we get a hit, fire fancybox and pass in configs
+		return (useConfig) ? $.fancybox(theHref, useConfig) : false;
+	};
+
+	privateMethods.getCurrentStore = function getCurrentStore(){
+		var storeAddress = cookieUtils.readCookie('THD_LOCSTORE');
+		var currentStore = storeAddress.split('+')[0] || '';
+		return currentStore;
+	}
+
+	// Quick Order Module - right now called from Pro header
+	privateMethods.overlayQuickOrderModule = function overlayQuickOrderModule(e) {
+		e.preventDefault();
+
+		theHref = 'https://' + globalUtility.getHostNameSecure() + '/webapp/wcs/stores/servlet/THDQuickOrderFormAjaxResponseView?langId=-1&storeId=10051&catalogId=10053';
+		$.fancybox(theHref, overlayConfig.quickOrder);
+	};
+
+
+	privateMethods.overlayFooterEmailPopup = function overlayFooterEmailPopup(e) {
+		e.preventDefault();
+		// @QUESTION: What is `document.emailsub`
+		theHref = 'https://' + globalUtility.getHostNameSecure() + '/webapp/wcs/stores/servlet/THDEmailSignUpAddCmd?langId=-1&storeId=10051&catalogId=10053&URL=EmailSignUpView&subscrType=' + document.emailsub.subscrType.value + '&emailInput=' + document.emailsub.emailInput.value + '&formName=emailsub';
+		$.fancybox(theHref, overlayConfig.emailSignUp);
+		document.emailsub.emailInput.value = 'Enter Email Address';
+	};
+
+	// Load applinaces JS to Trigger Appliances
+	// privateMethods.triggerATCApplOverlay = function triggerATCApplOverlay(e) {
+	// 	var $this = $(this);
+
+	// 	e.preventDefault();
+
+	// 	if ($this.hasClass('triggerATCAppliOverlay')) {
+	// 		require(['thd.applAtcOverlay']).done(function done(applAtcOverlay) {
+	// 			applAtcOverlay.initApplATCOverlay($this);
+	// 		});
+	// 	} else if ($this.hasClass('triggerApplChangeZipOverlay')) {
+	// 		require(['thd.applChangeZipCode'], function done(applChangeZipCode) {
+	// 			applChangeZipCode.initApplChangeZipCodeOverlay($this);
+	// 		});
+	// 	}
+	// };
+	// Fetch page implimentation to trigger overlays
+	privateMethods.triggerOverlay = function triggerOverlay(e) {
+		var type = $(this).data('overlay-type');
+		theHref = $(this).attr('href');
+		var content = (type === 'modal') ? $(theHref).html() : theHref; // For hidden content on a page ref by ID
+		e.preventDefault();
+		return (overlayConfig[type]) ? $.fancybox(content, overlayConfig[type]) : false;
+	};
+
+	// this module is a singleton that is invoked when loaded based on the `initialized` flag
+	overlayConfig.init = function init() {
+		if (!overlayConfig.initialized) {
+			overlayConfig.initialized = true;
+			$(document)
+				.on('click', '.overlayTrigger', privateMethods.overlayTrigger)// The General Modal Trigger Event listner
+				.on('click', '.fbClose a', function fbClose() { $.fancybox.close(); return false; })// Fancybox Close Listiner
+				.on('click', '#btnEmailFooter', privateMethods.overlayFooterEmailPopup)// Footer email Listner
+				.on('click', '#quickorderModule, .quickorderModule', privateMethods.overlayQuickOrderModule)// Quick Order Module Listner
+				// .on('click', '.triggerATCAppliOverlay,.triggerApplChangeZipOverlay', privateMethods.triggerATCApplOverlay)// Trigger Appliances Overlay
+				.on('click', '.triggerOverlay', privateMethods.triggerOverlay);// Fetch Modal Trigger Event listner
+		}
+	};
+
+	/*----------------------------------------------------
+	|
+	| CReplicate the HD_lightbox functionality QC# 13990 & 11801
+	|
+	----------------------------------------------------*/
+	overlayConfig.HDLightbox = function HDLightbox() {
+		var galleryOutput = '<div id="gallery_wrapper" class="clearfix"><a class="close_btn" href="#">CLOSE X</a><div id="galleryPlaceHolder">{{GALERY_HERE}}</div></div>';
+		var theLink = $(this).attr('href');
+		var galleryOverlayConfig = {
+			'onComplete': function onComplete() {
+				$('.close_btn', '#fancybox-wrap').click(function click() {
+					$.fancybox.close();
+					return false;
+				});
+			},
+			'padding': 0,
+			'autoSize': false,
+			'transitionIn': 'none',
+			'transitionOut': 'none',
+			'scrolling': 'no',
+			'showCloseButton': false,
+			'overlayOpacity': 0.70,
+			'overlayColor': '#666'
+		};
+
+
+		$.ajax({
+			url: theLink,
+			success: function success(newHTML) {
+				var html = newHTML.replace(/[\n\t\r]/g, '').match(/<body>(.*)<\/body>/)[1];
+
+				galleryOutput = galleryOutput.replace('{{GALERY_HERE}}', html);
+			}
+		});
+
+		$.fancybox(galleryOutput, galleryOverlayConfig);
+		return false;
+	};
+
+	// Removing this as i dont know who uses it.
+	// @TODO expose
+	window.HD_Lightbox = function HD_Lightbox() {
+		console.warn('HD_Lightbox as a global is deprecated, use global.modal.HDLightbox');
+		overlayConfig.HDLightbox();
+	};
+
+	return overlayConfig;
+});

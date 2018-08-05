@@ -1,0 +1,90 @@
+(function closure(root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define([
+      'jquery',
+      'account.utility',
+      'verification.constants',
+      'verification.helper',
+      'auth.constants'
+    ], function load(jQuery, accountUtility, Constants, verifyPhoneHelper, accountConstants) {
+      return factory(root, jQuery, accountUtility, Constants, verifyPhoneHelper, accountConstants);
+    })
+  } else {
+    factory(root, jQuery, accountUtility, Constants, verifyPhoneHelper, accountConstants);
+  }
+})(this, function factory(root, $, accountUtility, Constants, verifyPhoneHelper, accountConstants) {
+  var getVerifyPhoneOTP = function(phoneNumber, svocId, emailId, channelId, authorizationToken) {
+    return accountUtility.triggerAJAXCall({
+      url: Constants.URLS.VERIFY_PHONE_URL + svocId + '/getPhoneOTP?emailId=' + emailId + '&phoneNumber=' + phoneNumber,
+      type: 'GET',
+      headers: verifyPhoneHelper.generateHeaders(channelId),
+      beforeSend: function(xhr) {
+        xhr.setRequestHeader('Authorization', authorizationToken);
+      },
+      xhrFields: {withCredentials: true}
+    })
+  };
+
+  var validateVerifyPhoneOTP = function(channelId, svocId, authorizationToken, verifyPhoneRequest) {
+    return $.ajax({
+      url: Constants.URLS.VERIFY_PHONE_URL + svocId + '/verifyPhoneOTP',
+      type: 'POST',
+      headers: verifyPhoneHelper.generateHeaders(channelId),
+      beforeSend: function(xhr) {
+        xhr.setRequestHeader('Authorization', authorizationToken);
+      },
+      xhrFields: {withCredentials: true},
+      data: JSON.stringify(verifyPhoneRequest),
+      dataType: 'json',
+      contentType: 'application/json'
+    });
+  };
+
+  var validateOTP = function(request, hat, channelId) {
+    var options = {
+      'Cust-Acct-Client-Token': hat.env,
+      'Cust-Acct-Client-Timestamp': hat.envTS,
+      'Cust-Acct-Client-ID': hat.envID,
+      'Cust-Acct-Client-Delay-Token-Validation': "100000"
+    };
+
+    return $.ajax({
+      url: accountConstants.URLS.VERIFY_OTP_PATH,
+      headers: verifyPhoneHelper.generateHeaders(channelId, options),
+      type: 'POST',
+      data: JSON.stringify(request),
+      crossDomain: true,
+      xhrFields: {
+        withCredentials: true
+      }
+    })
+  };
+
+  //Method to request OTP Code for resend feature
+  var requestEmailOTP = function(emailId, channelId, hat) {
+    accountUtility.showLoader();
+    var options = {
+      'Cust-Acct-Client-Token': hat.env,
+      'Cust-Acct-Client-Timestamp': hat.envTS,
+      'Cust-Acct-Client-ID': hat.envID,
+      'Cust-Acct-Client-Delay-Token-Validation': "100000"
+    };
+
+    return $.ajax({
+      url: accountConstants.URLS.REQUEST_OTP_PATH + emailId,
+      headers: verifyPhoneHelper.generateHeaders(channelId, options),
+      type: 'GET',
+      crossDomain: true,
+      xhrFields: {
+        withCredentials: true
+      }
+    });
+  };
+
+  return {
+    getVerifyEmailOTP: requestEmailOTP,
+    getVerifyPhoneOTP: getVerifyPhoneOTP,
+    validateVerifyPhoneOTP: validateVerifyPhoneOTP,
+    validateOTP: validateOTP
+  }
+});

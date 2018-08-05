@@ -1,0 +1,1438 @@
+/* global THD,jQuery,Mustache,THD_GLOBAL */
+(function closure(root, factory) {
+	if (typeof define === 'function' && define.amd) {
+		define(['jquery', 'mustache', 'global.namespace', 'digitalData', 'global.logging', 'cookie-utils', 'utils.url', 'global.utility', 'thd.search', 'hoverIntent'],
+			function load($, Mustache, THD, digitalDataWrapper, thdLogger, cookieUtils, utilsUrl, globalUtility, thdSearch) {
+				return factory($, Mustache, THD, digitalDataWrapper, thdLogger, cookieUtils, utilsUrl, globalUtility, thdSearch);
+			});
+	} else {
+		/* eslint-disable */
+		THD.Global.TypeAhead = factory(jQuery, Mustache, THD, root.THD.Analytics.GlobalDDO, THD.log, cookieUtils, THD.Utils.Url, THD.Utility.Config, $.fn.hoverIntent, THD.Search);
+		/* eslint-enable */
+	}
+})(this, function factory($, Mustache, THD, digitalDataWrapper, thdLogger, cookieUtils, utilsUrl, globalUtility, thdSearch) {
+		/*
+	 * Module: THD.Global.TypeAhead
+	 */
+	var typeAhead = THD.Utility.Namespace.createNamespace('THD.Global.TypeAhead');
+	// easy to change text
+	var digitalData = digitalDataWrapper.get();
+	var onsiteSearchInfo = '';
+	var urlRegex = /hd-(.+)\.homedepotdev\.com/;
+	var result = window.location.hostname;
+	var testEnvs = 'localhost,localhost.homedepot.com';
+	// var detailTitleCharacterLimit = 25;
+	var ajaxCaching = true;
+	var ajaxCallbackReference = {};
+	var searchTypeAheadType;
+	var config = {
+		jsonpReferenceField: 'st',
+		CallbackName: {
+			Terms: 'termCallback',
+			Details: 'detailCallback'
+		},
+		text: {
+			noResults: 'Press Enter to View Available Products'
+		},
+		regex: {
+			hasHostname: /(http|https):\/\/(\w+:{0,1}\w*@)?(\S+)(:[0-9]+)?(\/|\/([\w#!:.?+=&%@!\-\/]))?/
+		}
+	};
+	var typeAheadUrl;
+	var typeAheadAjax;
+	var originalKeyDownHandler = null;
+	var baseIndex;
+	var template = {
+		typeAhead: [
+			'<div id="typeAheadFlyOut" class="typeahead col__12-12--sm col__12-12--md col__12-12--lg col__11-12">',
+			'<div class="main col__12-12">',
+			'<ul class="terms"></ul>',
+			'</div>',
+			/* Commented this section as part of the story remove right rail from TA */
+			/* '<div class="detail col__9-12"></div>', */
+			'</div>'
+		].join(''),
+		/* Commented this section as part of the story remove right rail from TA */
+		/* details: [
+			'<div class="products">',
+			'<h2>Top Results for "<span>{{st}}</span>"</h2>',
+			'<ul></ul>',
+			'</div>',
+			'<div class="links">',
+			'<ul>',
+			'<li class="typeaheadOne col__6-12 pad"><ul></ul></li>',
+			'<li class="typeaheadTwo col__6-12 pad"><ul></ul></li>',
+			'</ul>',
+			'</div>'
+		].join(''), */
+		firstTerm: ['<li style="display:none">',
+			'<a tabindex="{{tabindex}}" data-details="{{du}}" data-analytics="1|1{{#in}}|{{in}}{{/in}}" data-category="suggested term" data-value="{{value}}" data-searchTerm="{{termLong}}" data-termorigin="{{ot}}" title="{{termLong}}" href="{{k}}">',
+			'{{{t}}} {{#desc}}<span>{{desc}}</span>{{/desc}}',
+			'</a>',
+			'</li>'
+		].join(''),
+		term: ['<li>',
+			'<a tabindex="{{tabindex}}" data-details="{{du}}" data-analytics="1|1{{#in}}|{{in}}{{/in}}" data-category="suggested term" data-value="{{value}}" data-searchTerm="{{termLong}}" data-termorigin="{{ot}}" title="{{termLong}}" href="{{href}}">',
+			'{{{t}}} {{#desc}}<span>{{desc}}</span>{{/desc}}',
+			'</a>',
+			'</li>'
+		].join(''),
+		history:
+			['<div class="search-history col__12-12">',
+				'<div class="u__bold history-header">Your recent searches</div>',
+				'<ul class="list--type-plain"></ul>',
+				'<div class="clear-search-history">',
+				'<a href="#" class="js-clear-search-history u__default-link">Clear Search History</a>',
+				'</div>',
+				'</div>'
+			].join('\n'),
+		historyLi: [
+			'<li>',
+			'<a tabindex="{{i}}" class="u—show" data-details="{{du}}" data-analytics="1|4|0" data-category="recent searches" data-value="{{keyword}}" href="{{{href}}}">',
+			'{{t}}',
+			'</a>',
+			'</li>'
+		].join(''),
+		category: [
+			'<li>',
+			'<a tabindex="{{tabindex}}" data-details="{{du}}" data-analytics="1|2{{#in}}|{{in}}{{/in}}" class="categories" data-category="suggested term in category" data-value="{{value}}" data-searchTerm="{{value}} in {{termLong}}" data-termorigin="{{ot}}" title="in {{termLong}}" href="{{k}}">',
+			'{{{t}}} {{#desc}}<span>{{desc}}</span>{{/desc}}',
+			'</a>',
+			'</li>'
+		].join(''),
+		section: [
+			'<li>',
+			'{{#title}}<h3><i class="{{icon}}"></i>{{title}}</h3>{{/title}}',
+			'<ul class="orangeList">',
+			'{{#l}}',
+			'<li>',
+			'<a tabindex="{{tabindex}}" data-category="{{category}}" data-analytics="1|3{{#in}}|{{in}}{{/in}}" data-value="{{titleLong}}" data-termorigin="{{ot}}" title="{{titleLong}}" href="{{k}}">',
+			'<span>{{{t}}}</span>',
+			'</a>',
+			'</li>',
+			'{{/l}}',
+			'</ul>',
+			'</li>'
+		].join('')
+
+		/* Commented this section as part of the story remove right rail from TA ***/
+		/* ,
+		products: [
+			'{{#l}}',
+			'<li class="col__4-12 pad">',
+			'<a tabindex="{{tabindex}}" title="{{{titleLong}}}" data-category="{{category}}" data-termorigin="{{ot}}" data-analytics="1|3{{#stp}}|{{stp}}{{/stp}}{{#in}}:{{in}}{{/in}}" {{#st}}data-value="{{st}}"{{/st}} data-stcategory="{{stcategory}}" data-stsearchterm="{{stsearchterm}}" href="{{k}}">',
+			'{{#i}}<img src="{{i}}" alt="{{{titleLong}}}" />{{/i}}',
+			'{{#t}}<span>{{{t}}}</span>{{/t}}',
+			'</a>',
+			'<div class="ratings">',
+			'<a href="{{k}}#customer_reviews" class="{{rs}}" data-category="{{category}}" data-termorigin="{{ot}}" data-analytics="1|3{{#stp}}|{{stp}}{{/stp}}{{#in}}:{{in}}{{/in}}" {{#st}}data-value="{{st}}"{{/st}} data-stcategory="{{stcategory}}" data-stsearchterm="{{stsearchterm}}">',
+			'<span style="width:{{ratingsWidth}}%" title="{{rm}}" rel="{{r}}" class="stars"></span>',
+			'</a>',
+			'{{#tr}}',
+			'<a href="{{k}}#customer_reviews" class="b ratings__count" data-category="{{category}}" data-termorigin="{{ot}}" data-analytics="1|3{{#stp}}|{{stp}}{{/stp}}{{#in}}:{{in}}{{/in}}" {{#st}}data-value="{{st}}"{{/st}} data-stcategory="{{stcategory}}" data-stsearchterm="{{stsearchterm}}"> ({{tr}})</a>',
+			'{{/tr}}',
+			'</div>',
+			'</li>',
+			'{{/l}}'
+		].join('')*/
+	};
+	var controls = {};
+	var prioritySearchTerm = '';
+	var requestSearchTerm = '';
+
+	var privateMethods = {};
+	var HISTORY_COOKIE_NAME = 'search_history';
+	var MAX_STORAGE_DAYS = 31;
+
+	var ghostInputElm;
+
+	var typeaheadReady = false;
+	var hover = false;
+
+	privateMethods.history = {
+		cache: {
+			storageAvailable: null,
+			storage: null
+		},
+		storageAvailable: function storageAvailable(type) {
+			var storage;
+			var x;
+			if (typeof this.cache.storageAvailable === 'boolean') {
+				return this.cache.storageAvailable;
+			}
+			try {
+				storage = window[type];
+				x = '__storage_test';
+				storage.setItem(x, x);
+				storage.removeItem(x);
+				this.cache.storageAvailable = true;
+				return true;
+			} catch (e) {
+				this.cache.storageAvailable = false;
+				return false;
+			}
+		},
+		// wrapper for localStorage
+		// because you cant spyOn window.localStorage
+		localStorageWrapper: (typeof localStorage !== 'undefined')
+			? localStorage
+			: {},
+		addKeywordToStorage: function addKeywordToStorage(keyword, id) {
+			var searchHistory = this.getKeywordsFromStorage();
+			var domain = (/localhost/.test(window.location.host))
+				? '.' + window.location.host
+				: THD.Utility.Config.cookieDomain;
+			var slicedArr;
+
+			var cleaned = $.grep(searchHistory, function grep(el) {
+				return el.keyword !== keyword;
+			});
+
+			cleaned.unshift({
+				id: id,
+				keyword: keyword
+			});
+
+			if (this.storageAvailable('localStorage')) {
+				slicedArr = cleaned.slice(0, 100);
+				this.localStorageWrapper.setItem(HISTORY_COOKIE_NAME + '_date', new Date().getTime());
+				this.localStorageWrapper.setItem(HISTORY_COOKIE_NAME, JSON.stringify(slicedArr));
+			} else {
+				// cookie should only maintain 6 values to limit the space
+				slicedArr = cleaned.slice(0, 6);
+				cookieUtils.setCookieExpireInSeconds(HISTORY_COOKIE_NAME, JSON.stringify(slicedArr), 86400 * MAX_STORAGE_DAYS, domain);
+			}
+
+			this.cache.storage = slicedArr;
+		},
+		removeKeywordFromStorage: function removeKeywordFromStorage(keyword) {
+			var searchHistory = this.getKeywordsFromStorage() || [];
+			var cleaned = $.grep(searchHistory, function grep(el) {
+				return el.keyword !== keyword;
+			});
+			var str = JSON.stringify(cleaned);
+			if (this.storageAvailable('localStorage')) {
+				this.localStorageWrapper.setItem(HISTORY_COOKIE_NAME, str);
+			} else {
+				cookieUtils.setCookieExpireInSeconds(HISTORY_COOKIE_NAME, str, 86400 * 30, THD.Utility.Config.cookieDomain);
+			}
+			this.cache.storage = cleaned;
+		},
+		emptyStorage: function emptyStorage() {
+			if (this.storageAvailable('localStorage')) {
+				this.localStorageWrapper.setItem(HISTORY_COOKIE_NAME, '[]');
+			} else {
+				cookieUtils.setCookieExpireInSeconds(HISTORY_COOKIE_NAME, '[]', 86400 * 30, THD.Utility.Config.cookieDomain);
+			}
+			this.cache.storage = [];
+		},
+		emptyStorageIfOld: function emptyStorageIfOld() {
+			var ts;
+			if (this.storageAvailable('localStorage')) {
+				ts = parseInt(this.localStorageWrapper.getItem(HISTORY_COOKIE_NAME + '_date'), 10);
+				if (!isNaN(ts)) {
+					if (new Date().getTime() - ts >= 86400 * 1000 * MAX_STORAGE_DAYS) {
+						this.emptyStorage();
+					}
+				}
+			}
+		},
+		getKeywordsFromStorage: function getKeywordsFromStorage() {
+			var str = '[]';
+			var res;
+			if (this.cache.storage) {
+				return this.cache.storage;
+			}
+			if (this.storageAvailable('localStorage')) {
+				str = this.localStorageWrapper.getItem(HISTORY_COOKIE_NAME) || str;
+			} else {
+				str = cookieUtils.fed_ReadCookie(HISTORY_COOKIE_NAME) || str;
+			}
+
+			try {
+				str = decodeURIComponent(str);
+			}catch(e) {
+				console.log(e);
+			}
+
+			res = JSON.parse(str);
+			this.cache.storage = res;
+			return res;
+		},
+		getKeywordFromEvent: function getKeywordFromEvent(event) {
+			var $target = $(event.target);
+
+			if ((event.type === 'keyup' || event.type === 'click' ) && $target.hasClass('headerSearch__input')) {
+				return $.trim($target.val());
+			}
+			if (!$target.is(':visible')) {
+				// not visible. its a fake click event from Enter
+				return $.trim(controls.searchInput.val());
+			}
+
+			return $target.data('value') || $.trim(controls.searchInput.val());
+		},
+		getIdFromDetails: function getIdFromDetails(str) {
+			var re = /termId=([^&]+)/;
+			var results = re.exec(str);
+			if (results.length) {
+				return results[1];
+			}
+			return '';
+		},
+		getKeywordFromPathname: function getKeywordFromPathname(path) {
+			var re = /^\/s\/(.*)$/;
+			var res = re.exec(path);
+			if (!!res && res.length) {
+				res = decodeURIComponent(res[1]);
+				if (res.indexOf('%') !== -1) {
+					res = decodeURIComponent(res);
+				}
+				// remove trailing slashes
+				if (res[res.length - 1] === '/') {
+					res = res.slice(0, res.length - 1);
+				}
+				return res.replace(/\+/g, ' ');
+			}
+			return null;
+		},
+		createSearchHTML: function createSearchHTML(history, options) {
+			var defaults = $.extend({
+				typeaheadUrl: '',
+				inputValue: ''
+			}, options);
+			return $.map(history.slice(0, 6), function map(el, i) {
+				var tmp = $.extend({}, el);
+				tmp.i = i;
+				tmp.t = (el.keyword[0] === defaults.inputValue)
+					? privateMethods.formatSearchTerm(defaults.inputValue, el.keyword)
+					: el.keyword;
+				tmp.href = privateMethods.formatResK(defaults.typeaheadUrl, encodeURIComponent(encodeURIComponent(el.keyword)));
+				return Mustache.to_html(template.historyLi, tmp);
+			}).join('');
+		},
+		sortHistory: function sortHistory(history, letter) {
+			// split the history into three groups
+			// first letter matches
+			// second letter matches
+			// no letter matches
+			var firstSegment = $.grep(history, function grep(el) {
+				var word = el.keyword.split(' ');
+				return word[0][0] === letter;
+			});
+
+			var secondSegment = $.grep(history, function grep(el) {
+				var word = el.keyword.split(' ');
+				if (word.length > 1) {
+					return word[1][0] === letter;
+				}
+				return false;
+			});
+
+			var thirdSegment = $.grep(history, function grep(el) {
+				var word = el.keyword.split(' ');
+				if (word[0][0] === letter || (word.length > 1 && word[1][0] === letter)) {
+					return false;
+				}
+				return true;
+			});
+
+			return firstSegment.concat(secondSegment, thirdSegment);
+		},
+		normalizeHistoryArray: function normalizeHistoryArray(arr, options) {
+			var defaults = $.extend({
+				startIndex: 0,
+				typeaheadUrl: ''
+			}, options);
+			// transform it to match the same json response as typeahead
+			return {
+				r: $.map(arr, function ea(el, i) {
+					return {
+						t: el.keyword,
+						k: privateMethods.formatResK(defaults.typeaheadUrl, el.keyword),
+						du: '/TA2/products?termId=' + el.id + '&term=' +  encodeURIComponent(el.keyword) + '&callback=detailCallback',
+						in: defaults.startIndex + i,
+						tabindex: defaults.startIndex + i + 1,
+						h: true
+					};
+				})
+			};
+		},
+		paintAndShowTypeahead: function paintAndShowTypeahead() {
+			var h;
+			var val;
+			val = typeAhead.$searchInput.val();
+			h = this.getKeywordsFromStorage();
+			if (val) {
+				h = this.sortHistory(h, val);
+			}
+
+			$('body')
+				.off('click touchend', privateMethods.hideTypeAhead)
+				.on('click touchend', privateMethods.hideTypeAhead);
+			$('body')
+			.off('click touchend', privateMethods.removeFocus	)
+			.on('click touchend', privateMethods.removeFocus);
+
+			if (h.length) {
+				privateMethods.createTypeAhead();
+				$('ul', controls.historyContainer).html(this.createSearchHTML(h, {inputValue: val, typeaheadUrl: typeAheadUrl}));
+				controls.searchHistory.addClass('typeahead--history');
+			}
+		},
+		isVisible: function isVisible() {
+			if (!controls.typeAhead) {
+				return false;
+			}
+			return controls.searchHistory.hasClass('typeahead--history');
+		},
+		removeHistory: function removeHistory() {
+			if (controls.typeAhead) {
+				controls.searchHistory.removeClass('typeahead--history');
+			}
+		},
+		bind: function bind() {
+			var self = this;
+			function blur(e) {
+				setTimeout(function to() {
+					if (self.isVisible() || e.type === 'focusout') {
+						if(e.type !== 'focusin') {
+							self.removeHistory();
+						}
+					} else {
+						if (typeAhead.$searchInput.val().length < 1 && privateMethods.history.getKeywordsFromStorage().length) {
+							privateMethods.history.paintAndShowTypeahead();
+						}
+					}
+				}, 300);
+			}
+
+			$(document)
+				.on('blur', '#headerSearch', blur)
+				.on('focus', '#headerSearch', blur)
+				.on('click touchend', '.js-clear-search-history', function clearSearchHistory(e) {
+					e.preventDefault();
+					e.stopImmediatePropagation();
+					self.emptyStorage();
+					self.removeHistory();
+					privateMethods.hideTypeAhead(e);
+				})
+				.on('click', '.search-history a', function clickHistory(event) {
+					var $target = $(event.currentTarget);
+					event.preventDefault();
+					// if the target is not visible its a enter key on the search
+					privateMethods.stashAnalytics(event.currentTarget);
+					window.location.href = $target.attr('href');
+				})
+				.on('menuState', function menuState(event, state) {
+					if (state.isOpen) {
+						privateMethods.hideTypeAhead(event);
+						privateMethods.history.removeHistory();
+					}
+				});
+			// if storage is older than 30 days delete it
+		}
+	};
+
+
+	privateMethods.setPrioritySearchTerm = function setPrioritySearchTerm(term) {
+		prioritySearchTerm = term.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#x27;').replace(/\//g, '&#x2F;');
+		requestSearchTerm = term;
+		THD.log(term);
+		return prioritySearchTerm;
+	};
+
+	privateMethods.setAjaxCallbackReference = function setAjaxCallbackReference(callbackName, reference) {
+		ajaxCallbackReference[callbackName] = reference;
+		return reference;
+	};
+
+	privateMethods.getAjaxCallbackReference = function getAjaxCallbackReference(callbackName) {
+		return ajaxCallbackReference[callbackName];
+	};
+	// Create the type-ahead container
+	privateMethods.createTypeAhead = function createTypeAhead($el, $historyContainer) {
+		var box;
+		var history;
+		if (!controls.typeAhead && typeof $el !== 'undefined') {
+			// Create type-ahead
+			controls.container = $el;
+			if (!controls.container) {
+				// fallback to options
+				controls.container = this.opts.container;
+			}
+			controls.historyContainer = $historyContainer;
+			box = $(template.typeAhead);
+			history = $(template.history);
+
+			// controls.searchHistory = $('.search-history', history);
+			baseIndex = controls.searchInput.attr('tabindex') || 1;
+			// get useful elements to prevent requery
+			controls.main = box.find('.main');
+
+			controls.terms = controls.main.find('.terms');
+
+			/* Commented this section as part of the story remove right rail from TA */
+			/* controls.details = box.find('.detail'); */
+
+			// Attach the type-ahead, but don't show yet
+			controls.container.append(box);
+			controls.historyContainer.append(history);
+			controls.searchHistory = controls.historyContainer.children().eq(0);
+
+			// Remove event so no duplication
+			// $(this).off('focus', createTypeAhead);
+
+			// Attach to main control block
+			controls.typeAhead = box;
+			typeaheadReady = true;
+		}
+	};
+
+	// create typeahead link urls
+	privateMethods.findDomainUrl = function findDomainUrl() {
+		var fduresult = globalUtility.getHostNameNonSecure();
+		// test for local
+		if (testEnvs.indexOf(result) !== -1) {
+			// testing, choose your server
+		} else if (!urlRegex.test(result) || (typeof THD_GLOBAL === 'undefined')) {
+			// THD_GLOBAL is not there, like, 3rd Party header
+			fduresult = 'www.homedepot.com';
+		}
+		return window.location.protocol + '//' + fduresult;
+	};
+
+	// prepare the ajax urls for left rail
+	// create Ajax domain
+	privateMethods.findDomainAjax = function findDomainAjax() {
+		var hostname = window.location.hostname;
+		if (testEnvs.indexOf(hostname) !== -1) {
+			// localhost detected, use dev endpoint
+			result = 'origin-thdws.gcp-dev.homedepot.com';
+		} else if (!urlRegex.test(hostname)) {
+			result = 'www.thdws.com';
+		} else {
+			// assuming LLC, stage endpoint
+			result = 'origin-thdws.gcp-stage.homedepot.com';
+		}
+		return window.location.protocol + '//' + result;
+	};
+
+	// returns if mobile or non-mobile browser
+	privateMethods.getChannel = function getChannel() {
+		var c = 'Online';
+
+		// Must lock channel to Online, or it breaks.
+		// @TODO understand what breaks
+		/*
+		 * if (navigator.userAgent.match(/(iPad)|(iPhone)|(iPod)|(android)|(Windows Phone)|(webOS)/i)) { c = 'Mobile'; }
+		 */
+		return c;
+	};
+
+	// get the department drop down selection
+	privateMethods.getDepartment = function getDepartment() {
+		// @TODO make immutable
+		var department = $.trim(controls.department.val());
+		// patch: add 'id' to the Department list for 'search all'
+		// $('#dept-list li:first-child a').attr('id', '');
+		if (typeof department === 'undefined' || department === '') {
+			department = '0000';
+		}
+		return department;
+	};
+	// add variables to ajax url, arbitrary#, dept, ect.
+	privateMethods.getTypeAheadAjax = function getTypeAheadAjax(searchTerm) {
+		// for /search results
+		var searchUrl = typeAheadAjax;
+		var searchTerm2 = encodeURIComponent($.trim(searchTerm));
+		var tntTypeahead = cookieUtils.fed_ReadCookie('Tnt_typeahead');
+		searchUrl += '/TA2';
+		// Department Selected
+		searchUrl += '/search?term=';
+		// Append .js extension as search+term.js
+		searchUrl += searchTerm2.replace(/\s+/g, '+');
+		return (typeof tntTypeahead !== 'undefined' && tntTypeahead !== null) ? searchUrl + '&inclFBL=true' : searchUrl;
+	};
+
+	// get ajax e-value
+	privateMethods.getEValue = function getEValue() {
+		var e = $.trim(controls.eValue.val());
+		if (e === '') {
+			e = null;
+		}
+		return e;
+	};
+
+	privateMethods.getSelectedTermText = function getSelectedTermText(termAnchor) {
+		var trimmedAnchor = $.trim(termAnchor.text());
+		// Look for truncated results
+		if (result.indexOf('...') > -1) {
+			// use un-truncated content
+			trimmedAnchor = termAnchor.attr('title');
+		}
+		return trimmedAnchor;
+	};
+
+	privateMethods.setupKeyboardNavigation = function setupKeyboardNavigation() {
+		// Save and kill original handler
+		originalKeyDownHandler = controls.searchInput.get(0).keydown;
+		controls.searchInput.get(0).keydown = null;
+
+		// Have to do down to prevent tab navigation
+		controls.searchInput.on('keyup', privateMethods.keyboardNavigation);
+
+		// Prevent up/down from changing cursor location
+		controls.searchInput.on('keydown keypress', privateMethods.preventUpDown);
+	};
+
+	privateMethods.cleanUpKeyboardNavigation = function cleanUpKeyboardNavigation() {
+		controls.searchInput.off('keyup', privateMethods.keyboardNavigation);
+		controls.searchInput.off('keydown keypress', privateMethods.preventUpDown);
+
+		// restore original handler
+		if (originalKeyDownHandler) {
+			controls.searchInput.get(0).keydown = originalKeyDownHandler;
+			originalKeyDownHandler = null;
+		}
+	};
+
+	// arrows and tab key functionality
+	privateMethods.keyboardNavigation = function keyboardNavigation(event) {
+		var target;
+		var parentOfTarget;
+		var currentSelectedText;
+		thdLogger.log('Key', event.which, 'shift down', event.shiftKey, '', event.type);
+		// Enter
+		if (event.which === 13) {
+			if (originalKeyDownHandler) {
+				// Write in the currently selected search term
+				controls.searchInput.val(prioritySearchTerm);
+				originalKeyDownHandler(event);
+			} else {
+				/*
+				 * event.preventDefault(); $('#searchButton').click(); return false;
+				 */
+				if(hover) {
+					target = controls.terms.find('a[data-value="' + $('#headerSearch').val() + '"]')[0];
+				} else {
+					target = controls.terms.find('.active').get(0);
+				}
+				parentOfTarget = controls.terms.find('.active').parent();
+				// BRWS-2335
+				// console.log("analytics captured on enter key press:"+$(target).data("analytics"));
+				if (digitalData && digitalData.page && digitalData.page.onsiteSearchInfo) {
+					onsiteSearchInfo = digitalData.page.onsiteSearchInfo;
+					onsiteSearchInfo.searchTypeAheadBit =  $(target).data('analytics');
+				}
+				// BRWS-2548: ALL.FED.STY. Type Ahead Analytics - Stash Object
+				if (typeof target !== 'undefined' && parentOfTarget.css('display') !== 'none') {
+					target.click();
+				} else {
+					$('#headerSearchButton').click();
+					return false;
+				}
+			}
+		} else if (event.which === 39) {
+			// -> key
+			privateMethods.setSearchValtoGhostVal();
+			searchTypeAheadType = 'right arrow selection';
+		} else if ((event.which === 38) || (event.which === 9 && event.shiftKey)) {
+			// Up, or shift + tab
+			event.preventDefault();
+			privateMethods.navigateUp();
+			// Get this item here to ensure we get the new active and not
+			// the
+			// previous active.
+			target = controls.terms.find('.active')[0];
+
+			currentSelectedText = $(target).attr('data-value');
+			// Populate the search box with the selected text. PLP-1553
+			if (currentSelectedText) {
+				privateMethods.setGhostValue(currentSelectedText);
+				controls.searchInput.val(currentSelectedText);
+				$(target).trigger('change');
+			}
+			return false;
+
+			// Down, or tab
+		} else if ((event.which === 40) || (event.which === 9 && !event.shiftKey)) {
+			event.preventDefault();
+			privateMethods.navigateDown();
+			target = controls.terms.find('.active')[0];
+			currentSelectedText = $(target).attr('data-value');
+			// Populate the search box with the selected text. PLP-1553
+			if (currentSelectedText) {
+				privateMethods.setGhostValue(currentSelectedText);
+				controls.searchInput.val(currentSelectedText);
+				$(target).trigger('change');
+			}
+			return false;
+		}
+		return true;
+	};
+
+	// type A Head Stash Object Analtics
+	privateMethods.stashAnalytics = function stashAnalytics(target) {
+		// BRWS-2548 : ALL.FED.STY. Type Ahead Analytics - Stash Object
+		var thdAnalyticsEvent = {
+			category: {
+				primaryCategory: 'stash'
+			},
+			eventInfo: {
+				eventName: 'type ahead'
+			},
+			eventMode: 'stash'
+		};
+		var stashEvent = {};
+		stashEvent.searchTerm = typeof $(target).data('value') === 'undefined' ? $.trim(prioritySearchTerm) : $(target).data('value');
+		if($(target).data('category') === 'suggested term in category') {
+			stashEvent.searchTermSuggestion = typeof $(target).data('searchterm') === 'undefined' ? $.trim(prioritySearchTerm) : $(target).data('searchterm'); // $.trim(prioritySearchTerm);
+		}
+		/* if($(target).data('category') === 'products') {
+			if($(target).data('stcategory') === 'suggested term in category') {
+				stashEvent.searchTermSuggestion = typeof $(target).data('stsearchterm') === 'undefined' ? '' : $(target).data('stsearchterm');
+			}
+		} */
+		stashEvent.searchMedium = 'type ahead';
+		stashEvent.searchTypeAheadType = searchTypeAheadType ? searchTypeAheadType : $(target).data('category');
+		stashEvent.searchTypeAheadBits = $(target).data('analytics');
+		stashEvent.searchTermOrigin = typeof $(target).data('termorigin') === 'undefined' ? '' : $(target).data('termorigin');
+		thdAnalyticsEvent.stash = stashEvent;
+		if (typeof digitalData !== 'undefined' && digitalData.hasOwnProperty('event')) {
+			digitalData.event.push(thdAnalyticsEvent);
+		}
+		return true;
+	};
+
+	// Bound to keydown & keypress, used to prevent cursor movement.
+	privateMethods.preventUpDown = function preventUpDown(event) {
+		// Ignore tab, up, and down
+		var ignoreCharacters = ['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Up', 'Down'];
+		// See if its one of hte ignored characters
+		if ($.inArray(event.key, ignoreCharacters) > -1) {
+			THD.log('Preventing', event.key, event.type);
+			event.preventDefault();
+			// Failing to return false lets the browser submit the form
+			// without the changes
+			return false;
+		}
+		return true;
+	};
+
+	privateMethods.hideTypeAhead = function hideTypeAhead(e) {
+		var event;
+		var $target;
+		var targetNotInOverlay;
+		var h;
+
+		// remove ghost text value
+		privateMethods.setGhostValue('');
+
+		if (typeof e === 'undefined') {
+			event = {
+				target: $('body').get(0)
+			};
+		} else {
+			event = e;
+		}
+
+		if (!controls.typeAhead) {
+			return;
+		}
+
+		$target = $(event.target);
+		targetNotInOverlay = ($target.parents('#typeAheadFlyOut').length === 0) && (!$target.is('#typeAheadFlyOut'));
+		h = privateMethods.history.getKeywordsFromStorage();
+
+		if ($target.hasClass('headerSearch__input') && h.length) {
+			return;
+		}
+
+		if (targetNotInOverlay || $target.hasClass('js-clear-search-history')) {
+			controls.typeAhead.removeClass('loading typeahead__show');
+
+			// remove bindings, play time is over
+			$('body').off('click touchend', privateMethods.hideTypeAhead);
+			// Remove arrows and tab key functionality
+			privateMethods.cleanUpKeyboardNavigation();
+		}
+	};
+
+	privateMethods.showTypeAhead = function showTypeAhead() {
+		// Remove arrows and tab key functionality (in case it is still
+		// there)
+		privateMethods.cleanUpKeyboardNavigation();
+		$(document).trigger('hideHeaderDropdowns');
+		// Add arrows and tab key functionality
+		privateMethods.setupKeyboardNavigation();
+
+		// bind handler to remove type-ahead
+		$('body')
+			.off('click touchend', privateMethods.hideTypeAhead)
+			.on('click touchend', privateMethods.hideTypeAhead);
+		$('body')
+			.off('click touchend', privateMethods.removeFocus)
+			.on('click touchend', privateMethods.removeFocus);
+
+		controls.typeAhead.addClass('typeahead__show');
+	};
+
+	privateMethods.removeFocus = function removeFocus(e) {
+		var searchInput = $(e.target).is('.SearchBox__cover, .SearchBox__inputWrapper, .SearchBox__input');
+		if(!searchInput) {
+			document.activeElement.blur();
+		}
+		$('body').off('click touchend', privateMethods.removeFocus);
+	};
+
+	/*
+	 * Detail Callback Handler
+	 */
+	privateMethods.searchTermDetailChangedCallback = function searchTermDetailChangedCallback(data) {
+		if (
+			// Has data
+			data
+			/*
+			 * && // Compare this data to the current callback reference (getAjaxCallbackReference(config.CallbackName.Details) == data[config.jsonpReferenceField])
+			 */
+		) {
+			// console.log('IN', 'detail', localCounter, current);
+			/* Commented this section as part of the story remove right rail from TA */
+			/* controls.details.removeClass('loading');
+			privateMethods.loadDetails(data); */
+			// BRWS-2335
+			$('#typeAheadFlyOut .main a' /* #typeAheadFlyOut .detail a */).on('click', function onTermclick(e) {
+				var $target = $(e.currentTarget);
+				e.preventDefault();
+				e.stopImmediatePropagation();
+				// console.log("analytics captured on click:"+$(e.currentTarget).data("analytics"));
+				if (digitalData && digitalData.page && digitalData.page.onsiteSearchInfo) {
+					onsiteSearchInfo = digitalData.page.onsiteSearchInfo;
+					onsiteSearchInfo.searchTypeAheadBit = $target.data('analytics');
+				}
+				privateMethods.stashAnalytics(e.currentTarget);
+				window.location.href = $target.attr('href');
+			});
+		}
+	};
+
+	privateMethods.getTypeAheadAjaxUrl = function getTypeAheadAjaxUrl(path) {
+		return typeAheadAjax + path;
+	};
+	/*
+	 * Adds required parameters to Ajax request URL
+	 */
+	privateMethods.addTypeAheadDetailsParams = function addTypeAheadDetailsParams(url) {
+		/*
+		 * DR is needed for some reason, storeID needed for localized products
+		 */
+		var params = {
+			dr: 1
+				/*
+				 * , storeId : getTHDStoreNo()
+				 */
+		};
+		return utilsUrl.set({
+			url: url,
+			setParms: params,
+			addHost: true
+		});
+	};
+
+	/*
+	 * Detail JSONP Creation
+	 */
+	privateMethods.selectSearchTerm = function selectSearchTerm(termAnchor) {
+		// Get ajax URL
+		var detailsPath = termAnchor.attr('data-details');
+		var typeAheadDetailsUrl = privateMethods.getTypeAheadAjaxUrl(detailsPath);
+		var ajaxUrl = typeAheadDetailsUrl;
+		// Save the current search term for submission
+		var current = privateMethods.getSelectedTermText(termAnchor);
+		// Set callback name
+		var callbackName = config.CallbackName.Details;
+
+		// termAnchor.focus();
+		// Remove Currently Active
+		controls.terms.find('.active').removeClass('active');
+		// Set this active
+		termAnchor.addClass('active');
+		/* Commented this section as part of the story remove right rail from TA */
+		/* controls.details.show().addClass('loading'); */
+
+		// Set the priority search term;
+		privateMethods.setPrioritySearchTerm(current);
+
+		privateMethods.setAjaxCallbackReference(callbackName, requestSearchTerm);
+
+		// Make a script call to avoid JSONP error with static callback
+		// names
+		return $.ajax(ajaxUrl, {
+			dataType: 'script',
+			cache: ajaxCaching,
+			data: {
+				// searchTermDetailChangedCallback
+				callback: callbackName
+			}
+		});
+	};
+
+	/*
+	 * Search Term Callback Handler
+	 */
+
+	privateMethods.isCallbackForCurrentTerm = function isCallbackForCurrentTerm(data) {
+		var r = (data && data.r && (data.r.length >= 1));
+		var activeTerm = privateMethods.getAjaxCallbackReference(config.CallbackName.Terms);
+		r = (r && (data[config.jsonpReferenceField] === activeTerm));
+		return r;
+	};
+
+	privateMethods.searchTermChangedCallback = function searchTermChangedCallback(data) {
+		var fixedData;
+		// var t;
+		// check for data before showing, or hide
+		if (privateMethods.isCallbackForCurrentTerm(data)) {
+			fixedData = privateMethods.fixTermData(data.r, data[config.jsonpReferenceField] || '');
+
+			// Update the UI
+			privateMethods.loadTerms(fixedData);
+
+			// Attach hover intent
+			controls.terms.find('a').hoverIntent({
+				// number = sensitivity threshold (must be 1 or higher)
+				sensitivity: 70,
+				// number = milliseconds of polling interval
+				interval: 150,
+				// function = onMouseOver callback (required)
+				over: function over(event) {
+					hover = true;
+					privateMethods.selectSearchTerm($(event.target));
+					// t = controls.terms.find('.active')[0];
+					// controls.searchInput.val($(t).attr('data-value'));
+				},
+				// number = milliseconds delay before onMouseOut function call
+				timeout: 150,
+				// function = onMouseOut callback (required)
+				out: $.noop
+			});
+
+			// Select the first term
+			privateMethods.selectSearchTerm(controls.terms.find('li:first-child a'));
+
+			// Open the typeahead
+			privateMethods.showTypeAhead();
+		} else {
+			privateMethods.createTypeAhead();
+			privateMethods.loadTermsForNoData();
+			/* Commented this function as part of the story remove right rail from TA */
+			/* privateMethods.loadDetailsForNoData(); */
+			privateMethods.hideTypeAhead();
+			$('body')
+			.off('click touchend', privateMethods.removeFocus)
+			.on('click touchend', privateMethods.removeFocus);
+		}
+	};
+
+	/*
+	 * Search Term JSONP Creation
+	 */
+	privateMethods.onSearchTermChanged = function onSearchTermChanged(event, text) {
+		// console.log("Triggering event: " + event.which);
+		var newText = $.trim(text.toLowerCase());
+		var textLength = newText.length;
+		// Set callback name
+		var callbackName = config.CallbackName.Terms;
+		var ajaxUrl;
+		if(typeaheadReady) {
+			// Save the current search term for submission
+			privateMethods.setPrioritySearchTerm(newText);
+
+			// If the triggering event is up arrow, down arrow, tab, or shift
+			// key, don't update the type ahead
+			// term list.
+			if (!(event.which === 38) && !(event.which === 9) && !(event.which === 40) && !(event.which === 16)) {
+				if (textLength < 1) {
+					if (controls.typeAhead) {
+						controls.typeAhead.removeClass('loading');
+					}
+					privateMethods.hideTypeAhead(event);
+					privateMethods.history.paintAndShowTypeahead();
+				} else {
+					privateMethods.history.removeHistory();
+					// Create it if it isn't already
+					privateMethods.createTypeAhead();
+					// Get the ajaxURL
+					ajaxUrl = privateMethods.getTypeAheadAjax(newText);
+
+					// Save the ajax callback reference for this callback
+					privateMethods.setAjaxCallbackReference(callbackName, newText);
+					// Make a script call to avoid JSONP error with static
+					// callback
+					// names
+					$.ajax(ajaxUrl, {
+						dataType: 'script',
+						cache: ajaxCaching,
+						data: {
+							e: privateMethods.getEValue(),
+							callback: callbackName
+						}
+					});
+				}
+			}
+		} else{
+			privateMethods.createTypeAhead($('#typeAheadContainer'), $('#searchHistory'));
+		}
+	};
+
+	privateMethods.navigateUp = function navigateUp() {
+		var target = controls.terms.find('.active').parent().prev().children('a');
+		hover = false;
+		// Prevents scrolling psat the top of the list
+		if (target.length) {
+			privateMethods.selectSearchTerm(target);
+		}
+	};
+
+	privateMethods.navigateDown = function navigateDown() {
+		var target = controls.terms.find('.active').parent().next().children('a');
+		hover = false;
+		// Prevents scrolling past the end of the list.
+		if (target.length) {
+			privateMethods.selectSearchTerm(target);
+		}
+	};
+
+
+	// add left rail terms variables to the template, from ajax
+	privateMethods.loadTerms = function loadTerms(results) {
+		var fixedCategories;
+		var firstRes;
+		var isFirstItem = true;
+		controls.terms.detach().empty();
+
+		// apply history to last 1/2 item
+
+		$.each(results, function each(index, res) {
+			var parts;
+			if (isFirstItem) {
+				firstRes = {k: typeAheadUrl + '/s/' + encodeURIComponent(controls.searchInput.val()) + '?NCNI-5', t: res.t, du: res.du};
+				$(Mustache.to_html(template.firstTerm, firstRes)).appendTo(controls.terms);
+				privateMethods.setGhostValue(res.termLong);
+			}
+			if (/^\/s\//.exec(res.k)) {
+				parts = /\/s\/([^\?]+)?(.*)/.exec(res.k);
+				if (parts.length && parts.length > 1) {
+					res.k = '/s/' + encodeURIComponent(parts[1]) + (parts[2] ? parts[2] : '');
+				}
+			}
+			res.href =  typeAheadUrl + '/s/' + encodeURIComponent(encodeURIComponent(res.value)) + '?NCNI-5';
+			$(Mustache.to_html(template.term, res)).appendTo(controls.terms);
+			// If categories exist, loop through them and add them to the
+			// term list.
+			if ('v' in res) {
+				fixedCategories = privateMethods.fixCategorySearchData(res.v, res.termLong);
+				$.each(fixedCategories, function ea(indx, categoryData) {
+					$(Mustache.to_html(template.category, categoryData)).appendTo(controls.terms);
+				});
+			}
+			isFirstItem = false;
+		});
+		controls.terms.appendTo(controls.main);
+	};
+
+
+	privateMethods.loadTermsForNoData = function loadTermsForNoData() {
+		var res = {
+			t: $.trim(prioritySearchTerm)
+		};
+		res.termLong = res.t;
+		res.value = res.t;
+		res.t = privateMethods.formatSearchTerm(res.t, res.t);
+		res.tt = (res.t.indexOf('...') > -1) ? res.value : '';
+		// Create tab index
+		res.tabindex = (parseInt(baseIndex, 10) + 1);
+
+		res.k = privateMethods.formatResK(typeAheadUrl, prioritySearchTerm);
+		res.href =  typeAheadUrl + '/s/' + encodeURIComponent(encodeURIComponent(res.value)) + '?NCNI-5';
+		controls.terms.detach().empty();
+		$(Mustache.to_html(template.term, res)).appendTo(controls.terms);
+		controls.terms.appendTo(controls.main);
+	};
+
+	privateMethods.formatResK = function formatResK(url, t) {
+		return url + '/s/' + $.trim(t) + '?NCNI-5';
+	};
+
+	privateMethods.formatSearchTerm = function formatSearchTerm(searchTerm, string) {
+		// QC-28321: with all capitalizations
+		// String formatting necessary for matching "gas grills" (two
+		// spaces)
+		var newString = $.trim(string.replace(/\s+/g, ' '));
+		var newSearchTerm = $.trim(searchTerm.replace(/\s+/g, ' '));
+		var position = newString.toLowerCase().indexOf(newSearchTerm.toLowerCase());
+		var res = newString;
+		var truncated = false;
+		var replacement;
+		var end;
+
+		// Check that the term is actually within the string
+		if (position > -1 && position < res.length) {
+			// find replace target
+			end = truncated ? Math.min((res.length), (position + newSearchTerm.length)) : (position + newSearchTerm.length);
+
+			replacement = res.substring(end, res.length);
+
+			res = res.replace(replacement, ['<b>', replacement, '</b>'].join(''));
+		}
+		return res;
+	};
+
+	privateMethods.formatCategorySearchTerm = function formatCategorySearchTerm(categoryTerm) {
+		// QC-28321: with all capitalizations
+		// String formatting necessary for matching "gas grills" (two
+		// spaces)
+		return ' in ' + $.trim(categoryTerm.replace(/\s+/g, ' '));
+	};
+
+	privateMethods.fixTermData = function fixTermData(results, searchTerm) {
+		$.each(results, function ea(index, res) {
+			// save the full term before truncating for title/alt tags
+			res.termLong = res.t;
+			res.value = res.t;
+			res.t = privateMethods.formatSearchTerm(searchTerm, res.t);
+			res.title = (res.t.indexOf('...') > -1) ? res.value : '';
+			res.k = typeAheadUrl + res.k;
+			// Create tab index
+			res.tabindex = (parseInt(baseIndex, 10) + index + 1);
+		});
+
+		return results;
+	};
+
+	// adjust terms when entered into the search field
+	privateMethods.fixCategorySearchData = function fixCategorySearchData(results, currentParentTerm) {
+		$.each(results, function ea(index, res) {
+			// save the full term before truncating for title/alt tags
+			res.termLong = res.t;
+			res.value = currentParentTerm;
+			res.t = privateMethods.formatCategorySearchTerm(res.t);
+			res.title = (res.t.indexOf('...') > -1) ? res.value : '';
+			res.k = typeAheadUrl + res.k;
+			// Create tab index
+			res.tabindex = (parseInt(baseIndex, 10) + index + 1);
+		});
+		return results;
+	};
+	// add right rail products and guides data to the template, from
+	// ajax
+	/* Commented this function as part of the story remove right rail from TA */
+	/* privateMethods.loadDetails = function loadDetails(data) {
+		// console.log(data);
+		var activeSelection = controls.terms.find('.active');
+		var suggestedTermBits = activeSelection.data('analytics').split('|');
+		var isSuggestedTermInCatgory = activeSelection.data('category') === 'suggested term in category' ? true : false;
+		var suggestedTermPosition = (suggestedTermBits.length === 3 && !isSuggestedTermInCatgory) ? suggestedTermBits[2] : 1;
+		var sectionData = data.s;
+		var $newTerm;
+
+		controls.details.detach();
+
+		// update to the new hovered term
+		if (data.categoryName && data.st) {
+			$newTerm = data.st + ' ' + activeSelection.text();
+			if ($newTerm.length > detailTitleCharacterLimit) {
+				// &hellip; causes problems with Mustache templating. Be
+				// warned.
+				$newTerm = $newTerm.substr(0, detailTitleCharacterLimit) + '...';
+			}
+		} else {
+			if (activeSelection) {
+				$newTerm = activeSelection.text();
+				if (/^\sin\s/.test($newTerm)) {
+					$newTerm = data.st + ' ' + $newTerm;
+				}
+			} else {
+				$newTerm = controls.searchInput.val();
+			}
+		}
+		controls.details.html(Mustache.to_html(template.details, {
+			st: $.trim($newTerm)
+		}));
+
+
+		$.each(sectionData, function ea(index, dataItem) {
+			dataItem.stp = suggestedTermPosition;
+			dataItem.st = activeSelection.data('value');
+			dataItem.stcategory = activeSelection.data('category');
+			dataItem.stsearchterm = activeSelection.data('searchterm');
+        });
+
+        privateMethods.addSectionsToContainer(controls.details, sectionData);
+        controls.details.find('.links').toggleClass('borderZero', !false);
+        controls.details.appendTo(controls.typeAhead); };
+        privateMethods.loadDetailsForNoData = function loadDetailsForNoData() {
+		controls.details.detach();
+		controls.details.html(Mustache.to_html(template.details, {
+			term: $.trim(prioritySearchTerm)
+		}));
+		controls.details.find('.products h2').html(config.text.noResults);
+		controls.details.appendTo(controls.typeAhead);
+		privateMethods.setGhostValue('');
+	}; */
+
+	privateMethods.addSectionsToContainer = function addSectionsToContainer(container, data) {
+		var $columnOne = container.find('.typeaheadOne ul');
+		var $columnTwo = container.find('.typeaheadTwo ul');
+		var $products = container.find('.products ul');
+
+		$.each(data, function ea(index, sectionData) {
+			var section = privateMethods.processData(sectionData);
+			var insertTarget;
+			var html;
+
+			// attach term
+			if (privateMethods.isProductSection(section)) {
+				insertTarget = $products;
+			} else {
+				insertTarget = ((index % 2) ? $columnTwo : $columnOne);
+			}
+
+			// Create the HTML
+			html = Mustache.to_html(template[section.template], section);
+
+			// Attach it to the target
+			$(html).appendTo(insertTarget);
+
+			// If the section is products, check for no products returned;
+			if (privateMethods.isProductSection(section) && !privateMethods.hasLinks(section)) {
+				// Fix the title
+				container.find('.products h2').html(config.text.noResults);
+			}
+		});
+	};
+
+	privateMethods.processData = function processData(data) {
+		// add icons to right rail bottom section
+		privateMethods.attachIconData(data);
+		// Select a template
+		data.template = 'products';
+
+		// Fix link data
+		$.each(data.l, function ea(index, link) {
+			data.l[index] = privateMethods.fixLinkData(link, data.tt);
+		});
+
+		return data;
+	};
+
+	privateMethods.fixLinkData = function fixLinkData(link, category) {
+		var idMatch = link.k.match(/\d+$/);
+		var imageHost = (typeof THD_GLOBAL !== 'undefined' && typeof THD_GLOBAL.imagePath !== 'undefined') ?
+			THD_GLOBAL.imagePath :
+			window.location.protocol + '//www.homedepot.com';
+
+		// Add title as category;
+		link.category = category;
+		// Duplicate title
+		link.titleLong = privateMethods.truncateString(link.t, 250);
+		link.t = privateMethods.truncateString(link.t, 35);
+
+		if (idMatch) {
+			link.value = idMatch[0];
+		}
+
+		link.k = window.location.protocol + '//www.homedepot.com' + link.k;
+
+		link.i = imageHost + link.i;
+
+		link.ratingsWidth = privateMethods.calculateRatingsWidth(link.r);
+
+		return link;
+	};
+
+	privateMethods.hasLinks = function hasLinks(sectionData) {
+		return (sectionData.l && (sectionData.l !== '') && (sectionData.l.length > 0));
+	};
+
+	privateMethods.isProductSection = function isProductSection(sectionData) {
+		return (sectionData.tt === 'products');
+	};
+	privateMethods.isBrowse = function isBrowse(locationObj) {
+		var re = new RegExp(locationObj.origin + '/b/');
+		return re.test(locationObj.href);
+	};
+	privateMethods.isPIP = function isPIP(locationObj) {
+		var re = new RegExp(locationObj.origin + '/p/');
+		return re.test(locationObj.href);
+	};
+	privateMethods.isSearchPage = function isPIP(locationObj) {
+		var re = new RegExp(locationObj.origin + '/s/');
+		return re.test(locationObj.href);
+	};
+	// add icons to right rail bottom section. QC-28847
+	privateMethods.attachIconData = function attachIconData(data) {
+		if (/Blog/gi.test(data.title)) {
+			data.icon = 'icon-blog';
+		} else if (/Buying Guide/gi.test(data.title)) {
+			data.icon = 'icon-buyingGuide';
+		} else if (/Project Guide/gi.test(data.title)) {
+			data.icon = 'icon-projectGuide';
+		}
+	};
+
+	privateMethods.truncateString = function truncateString(string, length) {
+		var res = string;
+		if (res.length >= length) {
+			res = res.substr(0, length);
+			res = res.slice(0, res.lastIndexOf(' '));
+			res = res + '&hellip;';
+		}
+		return res;
+	};
+
+	privateMethods.appendHostName = function appendHostName(string) {
+		var str = string;
+		if (!config.regex.hasHostname.test(string)) {
+			str = typeAheadUrl + string;
+		}
+		return str;
+	};
+
+	privateMethods.calculateRatingsWidth = function calculateRatingsWidth(rating) {
+		if (rating) {
+			return (rating * 20);
+		}
+		return '0.0';
+	};
+
+	privateMethods.buildGhost = function buildGhost() {
+		var mainInputElm = document.getElementById('headerSearch');
+		ghostInputElm = document.createElement('input');
+		ghostInputElm.setAttribute('type', 'text');
+		ghostInputElm.setAttribute('id', 'headerSearchGhost');
+		ghostInputElm.className = 'SearchBox__input--ghost';
+		mainInputElm.parentNode.appendChild(ghostInputElm);
+	};
+
+	privateMethods.setGhostValue = function setGhostValue(term) {
+		var headerSearchElm = document.getElementById('headerSearch');
+		var searchedTermIsInReturmedTerm = ( term.indexOf(headerSearchElm.value) === 0);
+
+		if(searchedTermIsInReturmedTerm) {
+			ghostInputElm.value = term;
+		}else{
+			ghostInputElm.value = '';
+		}
+	};
+
+	privateMethods.setSearchValtoGhostVal = function setSearchValtoGhostVal() {
+		var headerSearchElm = document.getElementById('headerSearch');
+		headerSearchElm.value = ghostInputElm.value;
+	};
+
+	/*
+	 * jQuery Plugin to handle inputChange
+	 */
+	$.fn.extend({
+		inputChange: function inputChange(callback, options) {
+			var defaults = {
+				event: 'click keyup touchend'
+			};
+			var currentOptions = $.extend(defaults, (options || {}));
+			return this.each(function eachItem() {
+				var o = currentOptions;
+				var $this = $(this);
+				var text = $this.val();
+				$this.on(o.event, function on(event) {
+					var newText = $this.val();
+					// if (newText !== "") { //trigger event, even if text is empty
+					callback.call($this, event, newText, text);
+					// }
+					text = newText;
+				});
+			});
+		}
+	});
+
+	typeAhead.initialize = function initialize(searchInput, options) {
+		var $searchInput = (typeof searchInput === 'string') ? $(searchInput) : searchInput;
+		var opts = $.extend({
+			container: $('.header:first'),
+			historyContainer: ($('#searchHistory').length)
+				? $('#searchHistory')
+				: null
+		}, options);
+		/* Added as part for remove right rail story to shrink ta container */
+		$( '.TypeAhead div.col__9-12--sm' ).addClass('col__5-12--sm col__6-12--md col__5-12--lg').removeClass('col__9-12--sm');
+
+		if (typeof $searchInput === 'undefined') {
+			$searchInput = $('#headerSearch');
+		}
+		$searchInput.off();
+		this.opts = opts;
+		this.$searchInput = $searchInput;
+
+		if ($('#headerSearch').length > 0) {
+			$(document).ready(function ready() {
+				var keyword;
+				var params;
+				// resolve urls
+				typeAheadUrl = privateMethods.findDomainUrl();
+				typeAheadAjax = opts.ajaxDomain || privateMethods.findDomainAjax();
+				controls.searchInput = $searchInput;
+				controls.department = $('#encodedNVal');
+				controls.eValue = $('#eVal');
+
+				// HACK: Remove existing typeAhead element;
+				// $('#typeahead').remove();
+
+				// Create type-ahead on focus
+				controls.searchInput.on('focus',
+					$.proxy(privateMethods.createTypeAhead,
+					this,
+					opts.container,
+					opts.historyContainer)
+				);
+				// Bind search term entry
+				controls.searchInput.inputChange(privateMethods.onSearchTermChanged);
+				privateMethods.history.bind();
+
+				privateMethods.history.emptyStorageIfOld();
+
+				privateMethods.buildGhost();
+
+				if (privateMethods.isSearchPage(window.location) && !THD.Utility.Config.isNRF) {
+					keyword = privateMethods.history.getKeywordFromPathname(window.location.pathname);
+					privateMethods.history.addKeywordToStorage(keyword);
+				} else if (privateMethods.isPIP(window.location)) {
+					params = utilsUrl.get();
+					if (params.keyword) {
+						privateMethods
+							.history
+							.addKeywordToStorage(
+							    params.keyword.replace(/\+/g, ' ')
+							);
+					}
+				} else if (privateMethods.isBrowse(window.location) && !THD.Utility.Config.isNRF) {
+					keyword = thdSearch.getSearchVal();
+					if (keyword) {
+						privateMethods.history.addKeywordToStorage(keyword);
+					}
+				}
+			});
+		}
+	};
+
+	typeAhead.getPrivateMethods = function getPrivateMethods() {
+		return privateMethods;
+	};
+
+	// Globally expose handler
+	window[config.CallbackName.Details] = privateMethods.searchTermDetailChangedCallback;
+	// Globally expose handler
+	window[config.CallbackName.Terms] = privateMethods.searchTermChangedCallback;
+
+	return typeAhead;
+});

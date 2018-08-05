@@ -1,0 +1,167 @@
+/* globals define */
+/*
+  Purpose:
+    - Simple UI controller to update the users name and show hide the login/register buttons
+
+  Dependencies:
+    - jQuery
+    - Mustache
+    - THD Namespace
+*/
+
+(function closure(root, factory) {
+  /* istanbul ignore else  */
+  if (typeof define === 'function' && define.amd) {
+    define('header.myaccount', ['jquery', 'mustache', 'header.data', 'header.analytics', 'cookie-utils', 'plugin.tooltip'],
+      function load(jQuery, Mustache, headerData, headerAnalytics, cookieUtils) {
+        return factory(root, jQuery, Mustache, headerData, headerAnalytics, cookieUtils);
+      });
+  } else {
+    // For non-AMD module, expose this to global (will also be useful for test cases)
+    /*eslint-disable*/
+    var _hfapp = THD.Utility.Namespace.createNamespace('THD.HFApp');
+    _hfapp.maml = factory(root, jQuery, Mustache, THD.HFApp.data, HFApp.analytics, cookieUtils);
+    /*eslint-enable*/
+  }
+})(this, function factory(root, $, Mustache, headerData, headerAnalytics, cookieUtils) {
+  var maml = {};
+  var privateMethods = {};
+
+  // determine if the cart is replete with items
+  privateMethods.updateAccountIcon = function _updateAccountIcon(username) {
+    var userSignedIn = Boolean(username);
+    var $accountIcon = $('.MyAccount__icon');
+
+    $accountIcon.find('.HeaderIcon__primary')
+      .toggleClass('HeaderIcon__primary--active', userSignedIn);
+
+    $accountIcon.find('.HeaderIcon__secondary')
+      .toggleClass('HeaderIcon__secondary--active', userSignedIn);
+  };
+
+  privateMethods.initialize = function initialize() {
+    var template = {
+      loggedIn: '<div class="MyAccount__userInfo SimpleFlyout__link--bold">Hello, <span class="MyAccount__userInfo__name">{{usersName}}</span></div>',
+      loggedInLite: '<span class="MyAccount__userInfo SimpleFlyout__link--bold">Welcome</span>',
+      loggedOut: '<div class="MyAccount__label SimpleFlyout__link--bold">My Account</div>'
+    };
+
+    privateMethods.usersName = cookieUtils.getTHDUserName();
+
+    privateMethods.updateAccountIcon(privateMethods.usersName);
+
+    privateMethods.determineAuthState(template);
+
+    if(headerData.showMiniCart()) {
+      $('#headerMyAccount').tooltip({
+        type: 'click',
+        noPad: true,
+        closeOnClick: true,
+        onOpen: function _onOpenTooltip($tooltip, complete) {
+          $('#headerMyAccountDropdown')
+            .removeClass('u--hide')
+            .appendTo($tooltip);
+
+          complete();
+
+          $(document).trigger('openingHeaderToolTip', 'myaccount');
+        }
+      });
+      privateMethods.initialize.hasTooltip = false;
+      $('#headerMyAccount').on('mouseenter', function() {
+        const dropDown = $('#headerMyAccountDropdown');
+        const toolTip = dropDown.closest('[id*="tooltip"]');
+        if (!privateMethods.initialize.hasTooltip || toolTip.hasClass('ToolTip--closed')) {
+          $('#headerMyAccount').click();
+          privateMethods.initialize.hasTooltip = true;
+        }
+      });
+      $('#headerMyAccountDropdown').on('mouseleave', function() {
+        $('#headerMyAccount').click();
+        privateMethods.initialize.hasTooltip = false;
+      });
+    }
+    else{
+      $('#headerMyAccount').tooltip({
+        type: 'click',
+        noPad: true,
+        closeOnClick: true,
+        onOpen: function _onOpenTooltip($tooltip, complete) {
+          $('#headerMyAccountDropdown')
+            .removeClass('u--hide')
+            .appendTo($tooltip);
+
+          complete();
+
+          $(document).trigger('openingHeaderToolTip', 'myaccount');
+        }
+      });
+    }
+
+    return privateMethods;
+  };
+
+  privateMethods.determineAuthState = function determineAuthState(template) {
+    var html;
+    if (Boolean(privateMethods.usersName)) {
+      if (privateMethods.usersName === 'self') {
+        html = template.loggedInLite;
+        $('.headerMyAccountTitle').html(html);
+      } else {
+        // update the name in the button
+        html = Mustache.render(template.loggedIn, privateMethods);
+        $('.headerMyAccountTitle').html(html);
+      }
+      // toggle login button state
+      $('#authSignIn, #authRegister, #authSignOut, #authDivider').toggleClass('u--hide');
+
+    } else {
+      html = Mustache.render(template.loggedOut, privateMethods);
+      $('.headerMyAccountTitle').html(html);
+      $('#authSignIn, #authRegister, #authDivider').removeClass('u--hide');
+      $('#authSignOut').addClass('u--hide');
+    }
+
+    $('#simpleFlyout .MyAccount__label--loggedout').toggleClass('u--hide', !Boolean(privateMethods.usersName));
+    return privateMethods;
+  };
+
+  privateMethods.updateUserStatus =  function updateUserStatus() {
+    privateMethods.initialize();
+    // refresh Cart
+    $(document).trigger({
+      type: 'cartUpdated'
+    });
+
+    // refresh store
+    $(document).trigger({
+      type: 'newStoreSet'
+    });
+  };
+
+  privateMethods.logStoreFinderInteraction = function _logStoreFinderInteraction() {
+    var text = $(this).closest('a').text().toLowerCase();
+
+    return headerAnalytics.logEvent('header click', ['header', 'my account', text].join('>'));
+  };
+
+
+  /*
+   * Public Methods
+   */
+
+  maml.init = function init() {
+    $(document)
+      .on('click touchend', '#headerMyAccountDropdown .MyAccount__link', privateMethods.logStoreFinderInteraction)
+      .on('updateUserStatus', privateMethods.updateUserStatus)
+      .ready(privateMethods.initialize);
+
+    return this;
+  };
+
+  maml.getPrivateMethods = function getPrivateMethods() {
+    return privateMethods;
+  };
+
+  return maml;
+});

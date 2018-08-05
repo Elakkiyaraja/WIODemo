@@ -1,0 +1,31 @@
+(function closure(root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define([
+      'jquery',
+      'account.device.utility'
+    ], function load(jQuery, deviceUtility) {
+      return factory(root, jQuery, deviceUtility);
+    })
+  } else {
+    factory(root, jQuery, deviceUtility);
+  }
+}) (this, function factory(root, $, deviceUtility) {
+  var URLS = {
+    VERIFY_PHONE_URL: 'https://' + deviceUtility.getHostNameSecure() + '/customer/account/v1/'
+  };
+
+  var ERRORS = {
+    INVALID_CODE: "This code is incorrect.",
+    RESEND_PROMPT: "Looks like this code isn't working. Click the link below to resend your code and try a new one.",
+    RESEND_INTERNAL_ERR: "There was an error sending your code. \n Please try again",
+    SUBMIT_INTERNAL_ERR: "We're sorry. We could not verify your phone number at this time.",
+    BANNER_INTERNAL_ERR: "We're sorry, we could not verify your phone at this time. Please try again later.",
+    TWO_FACTOR_ERR: "We’re sorry. We could not sign you in at this time",
+    VALIDATION_FAILED_ERR: "We’re sorry. We couldn’t sign you in at this time. For assistance, call 800-466-3337."
+  };
+
+  return {
+    URLS: URLS,
+    ERRORS: ERRORS
+  }
+});

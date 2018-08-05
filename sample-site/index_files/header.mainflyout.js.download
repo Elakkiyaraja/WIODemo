@@ -1,0 +1,286 @@
+/* globals define */
+/*
+  Purpose:
+    - UI controller for the flyout on the L1 navigation list.
+
+  Dependencies
+    - Mustache
+    - jQuery
+    - Hoverintent
+    - THD Namespace
+*/
+
+(function closure(root, factory) {
+  /* istanbul ignore else  */
+  if (typeof define === 'function' && define.amd) {
+    define('header.mainflyout', ['jquery', 'mustache', 'header.data', 'header.analytics', 'hoverIntent'],
+      function load(jQuery, Mustache, headerData, headerAnalytics) {
+        return factory(root, jQuery, Mustache, headerData, headerAnalytics);
+      });
+  } else {
+    // For non-AMD module, expose this to global (will also be useful for test cases)
+    /*eslint-disable*/
+    var _hfapp = THD.Utility.Namespace.createNamespace('THD.HFApp');
+    _hfapp.flyout = factory(root, jQuery, Mustache, THD.HFApp.data, THD.HFApp.analytics, $.hoverIntent);
+    /*eslint-enable*/
+  }
+})(this, function factory(root, $, Mustache, headerData, headerAnalytics) {
+  var flyout = {};
+  var privateMethods = {};
+
+  privateMethods.templates = {};
+  privateMethods.templates.desktopSection = '' +
+    '<div class="MainFlyout__wrapper MainFlyout__wrapper--border">' +
+      '<header>' +
+          '{{#allLink}}<a href="{{allLink}}" class="MainFlyout__header">{{header}}</a>{{/allLink}}' +
+          '{{^allLink}}<span class="MainFlyout__header">{{header}}</span>{{/allLink}}' +
+        '</header>' +
+        '<ul class="MainFlyout__list">' +
+          '{{#links}}' +
+            '<li class="MainFlyout__item">' +
+              '<a href="{{url}}" class="MainFlyout__link"{{#sub}} data-level="{{sub}}"{{/sub}} title="{{name}}"{{#direct}} data-type="direct"{{/direct}}>{{name}}</a>' +
+            '</li>' +
+          '{{/links}}' +
+           '{{#allLink}}' +
+            '<li class="MainFlyout__item">' +
+              '<a href="{{allLink}}" class="MainFlyout__link" title="View All {{name}}" data-type="direct">View All {{name}}</a>' +
+            '</li>' +
+          '{{/allLink}}' +
+        '</ul>' +
+      '</div>';
+
+  privateMethods.templates.desktopFeature = '' +
+    '<div class="MainFlyout__wrapper">' +
+      '<span class="MainFlyout__detailsHeader">{{{title}}}</span>' +
+        '<a href="{{link}}" class="bttn-outline bttn--cta bttn--force-left">' +
+          '<span class="bttn__content">{{cta}}</span>' +
+      '</a>' +
+    '</div>';
+
+  /*
+   * Private Methods
+   */
+
+  privateMethods.logEventPath = function _logEventPath(type, pathArray) {
+    // Get header at the beginning, then join them all
+    return headerAnalytics.logEvent(type, ['header'].concat(pathArray).join('>'));
+  };
+
+  privateMethods.stopTouchHandling = function _stopTouchHandling(event) {
+    // If this is a touch interaction
+    if (event.type === 'touchend') {
+      // Orevent the normal behavior
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
+
+  privateMethods.triggerHoverintent = function _triggerHoverintent() {
+    $(this).trigger({
+      type: 'hoverintent',
+      target: this
+    });
+  };
+
+  privateMethods.setMenuState = function _setMenuState(state) {
+    $('.MainFlyout')
+      .toggleClass('MainFlyout--panels-3', (state === 'level2'))
+      .toggleClass('MainFlyout--panels-4', (state === 'level3'));
+  };
+
+  privateMethods.highlightLink = function _highlightLink($menu, $item) {
+    $('.MainFlyout__link--active', $menu).removeClass('MainFlyout__link--active');
+    $item.addClass('MainFlyout__link--active');
+  };
+
+  privateMethods.clearUrl = function _clearUrl(urlString) {
+    var result = urlString;
+
+    // Need to ensure this value isn't just a placeholder
+    // if it is, we need to remove the string so Mustache can tell.
+    if (result === '#') {
+      result = '';
+    }
+
+    return result;
+  };
+
+  privateMethods.interactWithLevel1Link = function _interactWithLevel1Link(event) {
+    var $this = $(event.target);
+    var level1Data = $this.data();
+    var level1Name = $this.text();
+    var level1Url = $this.attr('href');
+    var requestLevel2Data;
+
+    if (event.type !== 'click') {
+      requestLevel2Data = headerData.getLevel2Data(level1Data.level);
+
+      privateMethods.stopTouchHandling(event);
+
+      privateMethods.highlightLink('.MainFlyout__level1', $this);
+
+      requestLevel2Data.then(function _renderLevel2Data(level2Data) {
+        var htmlContent = Mustache.render(privateMethods.templates.desktopSection, {
+          header: level1Name,
+          links: level2Data,
+          allLink: privateMethods.clearUrl(level1Url),
+          name: level1Name
+        });
+
+        $('.MainFlyout__level2').html(htmlContent);
+        $('.MainFlyout__level1Details')
+          .css('background-image', 'url(' + level1Data.image + ')')
+          .html(Mustache.render(privateMethods.templates.desktopFeature, level1Data));
+
+        privateMethods.setMenuState('level2');
+      });
+    } else {
+      privateMethods.logEventPath('header click', ['all departments', level1Name]);
+    }
+  };
+
+  privateMethods.logLevel2Link = function _logLevel2Link(event) {
+    var $this = $(event.target);
+    var level1Name = $('.MainFlyout__level1 .MainFlyout__link--active').data('level');
+    var level2Name = $this.text();
+
+    privateMethods.logEventPath('header click', ['all departments', level1Name, level2Name]);
+  };
+
+  privateMethods.interactWithLevel2Link = function _interactWithLevel2Link(event) {
+    var $this = $(event.target);
+    var level1Name = $('.MainFlyout__level1 .MainFlyout__link--active').data('level');
+    var level2Name = $this.text();
+    var level2Url = $this.attr('href');
+    var requestLevel3Data;
+
+    if (event.type !== 'click') {
+      // stop touch handling
+      privateMethods.stopTouchHandling(event);
+
+      // Update the selected state
+      privateMethods.highlightLink('.MainFlyout__level2', $this);
+
+      requestLevel3Data = headerData.getLevel3Data(level1Name, level2Name);
+
+      requestLevel3Data.then(function _renderLevel3Data(level3Data) {
+        var htmlContent = Mustache.render(privateMethods.templates.desktopSection, {
+          header: level2Name,
+          links: level3Data,
+          allLink: privateMethods.clearUrl(level2Url),
+          name: level2Name,
+          direct: true
+        });
+
+        // Update the content
+        $('.MainFlyout__level3').html(htmlContent);
+
+        // Open the menu
+        privateMethods.setMenuState('level3');
+      });
+
+      // If it failed - could be that the index doesn't exist, or that its got no results
+      requestLevel3Data.fail(function _interactWithLevel2LinkFailure() {
+        privateMethods.setMenuState('level2');
+
+        if ((event.type === 'touchend') && (level2Url !== '#')) {
+          // log the event
+          privateMethods.logEventPath('header click', ['all departments', level1Name, level2Name]);
+
+          // Go where we were going any way - have to do this since we prevented the default to wait for ajax
+          window.location = level2Url;
+        }
+      });
+    // if its click and the link is dead
+    } else if (level2Url === '#') {
+      event.preventDefault();
+      event.stopPropagation();
+    } else {
+      privateMethods.logEventPath('header click', ['all departments', level1Name, level2Name]);
+    }
+  };
+
+  privateMethods.notifyMenuState = function _notifyMenuState(state) {
+    // Use a namespaced event, pass along the state
+    $(document).trigger('menuState', [{
+      isOpen: state,
+      menu: 'main'
+    }]);
+  };
+
+  privateMethods.logMainMenuClick = function _logMainMenuClick(event) {
+    // Find the closest anchor tag
+    var $this = $(event.target);
+    var level1Name = $('.MainFlyout__level1 .MainFlyout__link--active').data('level');
+    var level2Name = $('.MainFlyout__level2 .MainFlyout__link--active').text();
+    var path = ['all departments', level1Name];
+    var url = $this.attr('href');
+
+    if (event && (event.type === 'touchend')) {
+      event.preventDefault();
+    }
+
+    if (level2Name) {
+      path.push(level2Name);
+    }
+
+    path.push($this.text());
+
+    privateMethods.logEventPath('header click', path);
+
+    if (event.type === 'touchend') {
+      // because we prevented the touchend with preventDefault to stop click... it also stops the touchend.
+      window.location = url;
+    }
+  };
+
+  privateMethods.registerHoverIntent = function _registerHoverIntent(selector) {
+    $(document).hoverIntent({
+        selector: selector,
+        over: privateMethods.triggerHoverintent,
+        out: $.noop
+    });
+  }
+
+  // bind to all the necessary elements
+  privateMethods.initialize = function initialize() {
+    // delegate to all the things
+    $(document)
+      .on('click touchend hoverintent', '.MainFlyout__level1 .MainFlyout__link', privateMethods.interactWithLevel1Link)
+      .on('click touchend hoverintent', '.MainFlyout__level2 .MainFlyout__link:not([data-type="direct"])', privateMethods.interactWithLevel2Link)
+      .on('click touchend', '.MainFlyout__level2 .MainFlyout__link[data-type="direct"]', privateMethods.logLevel2Link)
+      .on('click touchend', '.MainFlyout__level1Details a', privateMethods.logMainMenuClick)
+      .on('click touchend', '.MainFlyout__level3 .MainFlyout__link', privateMethods.logMainMenuClick)
+      .on('click touchend', '.MainFlyout__level2 .MainFlyout__header', privateMethods.logLevel2Link)
+      .on('click touchend', '.MainFlyout__level3 .MainFlyout__header', privateMethods.logMainMenuClick);
+
+
+     privateMethods.registerHoverIntent('.MainFlyout__level1 .MainFlyout__link');
+     privateMethods.registerHoverIntent('.MainFlyout__level2 .MainFlyout__link');
+  };
+
+  /*
+   * Public Methods
+   */
+
+  flyout.init = function init() {
+    /* Events
+    ------------------------------------------------ */
+    // $(document).ready(privateMethods.initialize);
+    privateMethods.initialize();
+
+    // start loading the data now.
+    headerData.init();
+
+    // Boot the analytics
+    headerAnalytics.init();
+
+    return this;
+  };
+
+  flyout.getPrivateMethods = function getPrivateMethods() {
+    return privateMethods;
+  };
+
+  return flyout;
+});

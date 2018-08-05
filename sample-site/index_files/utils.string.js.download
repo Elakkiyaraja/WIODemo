@@ -1,0 +1,153 @@
+/* ------------------------------------------------------------------------------
+*	Utils string
+*	by: Brent Ayers ~ axb1525
+*
+*	Purpose: 
+*		- helper functions for lightbox
+*	To Do: 
+*		
+*		
+* ------------------------------------------------------------------------------ */
+
+(function (root, factory){
+
+	if(typeof define === "function" && define.amd){
+		define(['global.namespace'], function (THD){
+			return factory(THD);
+		});
+
+	}else{
+		factory(THD);
+	}
+
+})(this, function (THD){
+	var _utils = THD.Utility.Namespace.createNamespace('THD.Utils');
+		
+		_utils.Strings = { /*naming Strings to prvent any reserved word conflicts*/
+
+			ccCharsOnly : function ccCharsOnly(e) {
+				var keynum;
+				if (e.keyCode) {
+					keynum = e.keyCode;
+				} else if (e.which) {
+					keynum = e.which;
+				} else if (e.charCode) {
+					keynum = e.charCode;
+				}
+				if ((keynum == 8) || (keynum == 9) || (keynum == 32) || (keynum == 45) || (keynum > 47 && keynum < 58)) {
+					return true;
+				} else {
+					return false;
+				}
+			},
+
+
+			removeNonNumbers : function removeNonNumbers(event, field) {
+				var filteredValue = '';
+				var digits = "0123456789";
+				for (var i = 0; i < field.value.length; i++) {
+					// do not add non-numeric values
+					if (digits.indexOf(field.value.charAt(i)) != -1) {
+						// current digit is ok, can add this
+						filteredValue += field.value.charAt(i);
+					}
+				}
+				// replace the filtered value
+				field.value = filteredValue;
+			},
+
+
+			removeNonCCChars : function removeNonCCChars(event, field) {
+				var filteredValue = '';
+				var digits = "0123456789 -";
+				for (var i = 0; i < field.value.length; i++) {
+					// do not add non-numeric values
+					if (digits.indexOf(field.value.charAt(i)) != -1) {
+						// current digit is ok, can add this
+						filteredValue += field.value.charAt(i);
+					}
+				}
+				// replace the filtered value
+				field.value = filteredValue;
+			},
+
+			numbersOnly : function numbersOnly(event) {
+				var Key;
+				if (event.keyCode) {
+					Key = event.keyCode;
+					// ignore backspace
+					if (Key == 8 || Key == 13 || Key == 9) {
+						return true;
+					}
+				} else if (event.which) {
+					Key = event.which;
+				} else {
+					Key = event.charCode;
+				}
+				if (Key < 48 || Key > 57) {
+					return false;
+				}
+			},
+
+			/*************************************************************************************************
+			 *  Function:  maskCCNumber
+			 *	function to mask a number from a starting position to an ending position with a given character.
+			 *
+			 *  Parms:
+			 *	ccNbr				:  the credit card number which needs to be masked
+			 *   maskChar			:  the char to mask with.
+			 *	nbrOfDigitsToLeave	:  the number of digits that we want shown at the end (must be <= 4)
+			 *   returns     		:  the masked Credit Card number
+			 **************************************************************************************************/
+			maskCCNumber : function maskCCNumber(ccNbr, nbrOfDigitsToLeave, maskChar) {
+
+				var ccLength = ccNbr.length;
+
+				// this is for PCI compliance
+
+				if (nbrOfDigitsToLeave > 5) {
+					nbrOfDigitsToLeave = 4;
+				}
+
+				if (maskChar == null || maskChar.length <= 0) {
+					maskChar = '*';
+				}
+
+				var nbrOfDigitsToMask = ccLength - nbrOfDigitsToLeave;
+				var lastDigitsToShow = ccNbr.substring(nbrOfDigitsToMask, ccLength);
+				var maskStr = '';
+				for (i = 0; i < nbrOfDigitsToMask; i++) {
+					maskStr = maskStr + maskChar;
+				}
+
+				return maskStr + lastDigitsToShow;
+
+			},
+
+			formatUOM: function formatUOM( uom ) {
+				if(uom && typeof uom !== 'undefined' && uom.length) {
+					var index = $.trim(uom).indexOf('-');
+					if (index > 0 && index < uom.length-1) {
+						uom = uom.substring(index + 1);
+					}
+					uom = $.trim(uom.toLowerCase());
+					if( uom === 'square yard') {
+						uom = 'sq. yd.';
+					} else if( uom === 'square foot') {
+						uom = 'sq. ft.';
+					} else if(uom === 'pallet(lift)' ||  uom === 'pallet(unit load)') {
+						uom = 'pallet';
+					}
+				} else {
+					uom = 'each';
+				}
+				return uom;
+			}
+
+		};
+
+
+
+	return _utils.Strings;
+
+});

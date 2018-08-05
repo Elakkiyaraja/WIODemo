@@ -1,0 +1,272 @@
+(function webpackUniversalModuleDefinition(root, factory) {
+	if(typeof exports === 'object' && typeof module === 'object')
+		module.exports = factory(require("thd-client-throttle"));
+	else if(typeof define === 'function' && define.amd)
+		define(["thd-client-throttle"], factory);
+	else {
+		var a = typeof exports === 'object' ? factory(require("thd-client-throttle")) : factory(root["thd-client-throttle"]);
+		for(var i in a) (typeof exports === 'object' ? exports : root)[i] = a[i];
+	}
+})(this, function(__WEBPACK_EXTERNAL_MODULE_3__) {
+return /******/ (function(modules) { // webpackBootstrap
+/******/ 	// The module cache
+/******/ 	var installedModules = {};
+/******/
+/******/ 	// The require function
+/******/ 	function __webpack_require__(moduleId) {
+/******/
+/******/ 		// Check if module is in cache
+/******/ 		if(installedModules[moduleId])
+/******/ 			return installedModules[moduleId].exports;
+/******/
+/******/ 		// Create a new module (and put it into the cache)
+/******/ 		var module = installedModules[moduleId] = {
+/******/ 			exports: {},
+/******/ 			id: moduleId,
+/******/ 			loaded: false
+/******/ 		};
+/******/
+/******/ 		// Execute the module function
+/******/ 		modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+/******/
+/******/ 		// Flag the module as loaded
+/******/ 		module.loaded = true;
+/******/
+/******/ 		// Return the exports of the module
+/******/ 		return module.exports;
+/******/ 	}
+/******/
+/******/
+/******/ 	// expose the modules object (__webpack_modules__)
+/******/ 	__webpack_require__.m = modules;
+/******/
+/******/ 	// expose the module cache
+/******/ 	__webpack_require__.c = installedModules;
+/******/
+/******/ 	// __webpack_public_path__
+/******/ 	__webpack_require__.p = "";
+/******/
+/******/ 	// Load entry module and return exports
+/******/ 	return __webpack_require__(0);
+/******/ })
+/************************************************************************/
+/******/ ([
+/* 0 */
+/***/ (function(module, exports, __webpack_require__) {
+
+	'use strict';
+	
+	var _storage = __webpack_require__(1);
+	
+	var _helpers = __webpack_require__(2);
+	
+	var helpers = _interopRequireWildcard(_helpers);
+	
+	var _thdClientThrottle = __webpack_require__(3);
+	
+	var THD_CLIENT_THROTTLE = _interopRequireWildcard(_thdClientThrottle);
+	
+	function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
+	
+	var cameFromPIP = false; /* globals resx, mockRVData */
+	
+	var setDataInStorage = function setDataInStorage(data) {
+	  return (0, _storage.setSessionStorage)(helpers.mergeLocalData(data), 'rvData');
+	};
+	
+	var expireDataInStorage = function expireDataInStorage() {
+	  return (0, _storage.setSessionStorage)(0, 'RVDateStamp');
+	};
+	
+	var getDataFromStorage = function getDataFromStorage() {
+	  var rvData = (0, _storage.getSessionStorage)('rvData');
+	  return rvData;
+	};
+	
+	var shouldLoadFromStorage = function shouldLoadFromStorage() {
+	  var loadFromStorage = true;
+	  var domainMismatch = helpers.checkHost(document.referrer);
+	  var dataExpired = (0, _storage.getDataTimeOut)((0, _storage.getSessionStorage)('RVDateStamp'));
+	  cameFromPIP = helpers.getProductPageStatus(document.referrer);
+	
+	  /*
+	    logic:
+	      referrer is pip = get Data from API
+	      Expired date stamp = get Data from API
+	      Domain mismatch = get Data from API
+	  */
+	
+	  loadFromStorage = cameFromPIP ? false : loadFromStorage;
+	  loadFromStorage = domainMismatch ? loadFromStorage : false;
+	  loadFromStorage = dataExpired ? false : loadFromStorage;
+	
+	  return loadFromStorage;
+	};
+	
+	var checkThrottle = function checkThrottle(channel) {
+	  var throttleKey = channel === 'mobile' ? 33 : 32;
+	  var throttlePercent = channel === 'mobile' ? THD_GLOBAL.mobileRVThrottle : THD_GLOBAL.desktopRVThrottle;
+	  var rvThrottle = new THD_CLIENT_THROTTLE.ClientThrottle({
+	    throttlePercent: throttlePercent,
+	    key: throttleKey
+	  });
+	  return rvThrottle.getThrottleValue() === 1;
+	};
+	
+	module.exports = {
+	  shouldLoadFromStorage: shouldLoadFromStorage,
+	  checkThrottle: checkThrottle,
+	  setDataInStorage: setDataInStorage,
+	  getDataFromStorage: getDataFromStorage,
+	  expireDataInStorage: expireDataInStorage
+	};
+
+/***/ }),
+/* 1 */
+/***/ (function(module, exports) {
+
+	'use strict';
+	
+	// Feature detect + local reference
+	var testStorage = function testStorage() {
+	  var testString = 'test';
+	  try {
+	    sessionStorage.setItem(testString, testString);
+	    sessionStorage.removeItem(testString);
+	    return true;
+	  } catch (e) {
+	    return false;
+	  }
+	};
+	
+	var getDataTimeOut = function getDataTimeOut(date) {
+	  /* current logic = > 5 minute = true*/
+	  var dataDateObject = new Date(date.timestamp);
+	  var timeLimit = 60 * 1000 * 5; /* ms - currently five minutes */
+	  var dateDifference = new Date() - dataDateObject;
+	  return dateDifference > timeLimit;
+	};
+	
+	var setSessionStorage = function setSessionStorage(data, key) {
+	  var storageStatus = false;
+	  var storageString = JSON.stringify(data);
+	  var dateObject = {
+	    timestamp: new Date().toString()
+	  };
+	
+	  if (testStorage()) {
+	    sessionStorage.setItem(key, storageString);
+	    sessionStorage.setItem('RVDateStamp', JSON.stringify(dateObject));
+	    storageStatus = true;
+	  }
+	
+	  return storageStatus;
+	};
+	
+	var getSessionStorage = function getSessionStorage(key) {
+	  var dataSet = [];
+	  if (testStorage()) {
+	    dataSet = JSON.parse(sessionStorage.getItem(key));
+	  } else {
+	    dataSet = false;
+	  }
+	
+	  return dataSet || false;
+	};
+	
+	module.exports = {
+	  setSessionStorage: setSessionStorage,
+	  getSessionStorage: getSessionStorage,
+	  testStorage: testStorage,
+	  getDataTimeOut: getDataTimeOut
+	};
+
+/***/ }),
+/* 2 */
+/***/ (function(module, exports, __webpack_require__) {
+
+	'use strict';
+	
+	var _storage = __webpack_require__(1);
+	
+	var getProductPageStatus = function getProductPageStatus(location) {
+	  return location.indexOf('/p/') > -1;
+	};
+	
+	var mergeLocalData = function mergeLocalData(data) {
+	  var localData = (0, _storage.getSessionStorage)('rvData');
+	  var mergedArr = [].concat(data, localData);
+	  var dedupedArr = [];
+	  var isDuplicate = false;
+	  for (var _iterator = mergedArr, _isArray = Array.isArray(_iterator), _i = 0, _iterator = _isArray ? _iterator : _iterator[Symbol.iterator]();;) {
+	    var _ref;
+	
+	    if (_isArray) {
+	      if (_i >= _iterator.length) break;
+	      _ref = _iterator[_i++];
+	    } else {
+	      _i = _iterator.next();
+	      if (_i.done) break;
+	      _ref = _i.value;
+	    }
+	
+	    var product = _ref;
+	
+	    isDuplicate = false;
+	    for (var _iterator2 = dedupedArr, _isArray2 = Array.isArray(_iterator2), _i2 = 0, _iterator2 = _isArray2 ? _iterator2 : _iterator2[Symbol.iterator]();;) {
+	      var _ref2;
+	
+	      if (_isArray2) {
+	        if (_i2 >= _iterator2.length) break;
+	        _ref2 = _iterator2[_i2++];
+	      } else {
+	        _i2 = _iterator2.next();
+	        if (_i2.done) break;
+	        _ref2 = _i2.value;
+	      }
+	
+	      var i = _ref2;
+	
+	      if (i.productId === product.productId) {
+	        isDuplicate = true;
+	      }
+	    }
+	    if (!isDuplicate && product) {
+	      dedupedArr.push(product);
+	    }
+	  }
+	  return dedupedArr;
+	};
+	
+	var checkHost = function checkHost(referrer) {
+	  var mismatch = false;
+	  var location = window.location;
+	  var referringHost = referrer;
+	  var protocolMatch = true;
+	  var hostMatch = true;
+	  if (referringHost !== '') {
+	    protocolMatch = referrer.indexOf(location.protocol) > -1;
+	    referringHost = referringHost.match(/:\/\/(.[^/]+)/)[1];
+	    hostMatch = referringHost === location.host;
+	    mismatch = protocolMatch || hostMatch;
+	  }
+	  return mismatch;
+	};
+	
+	module.exports = {
+	  getProductPageStatus: getProductPageStatus,
+	  mergeLocalData: mergeLocalData,
+	  checkHost: checkHost
+	};
+
+/***/ }),
+/* 3 */
+/***/ (function(module, exports) {
+
+	module.exports = __WEBPACK_EXTERNAL_MODULE_3__;
+
+/***/ })
+/******/ ])
+});
+;
+//# sourceMappingURL=main.amd.js.map

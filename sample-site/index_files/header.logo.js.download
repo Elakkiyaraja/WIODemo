@@ -1,0 +1,50 @@
+/* globals define */
+
+(function closure(root, factory) {
+  /* istanbul ignore else  */
+  if (typeof define === 'function' && define.amd) {
+    define('header.logo', ['jquery', 'header.analytics'],
+      function load(jQuery, headerAnalytics) {
+        return factory(root, jQuery, headerAnalytics);
+      });
+  } else {
+    // For non-AMD module, expose this to global (will also be useful for test cases)
+    /*eslint-disable*/
+    var _hfapp = THD.Utility.Namespace.createNamespace('THD.HFApp');
+    _hfapp.logo = factory(root, jQuery, THD.HFApp.analytics);
+    /*eslint-enable*/
+  }
+})(this, function factory(root, $, headerAnalytics) {
+  var module = {};
+  var privateMethods = {};
+
+  var config = {
+    logoSelector: '.Header3__logo'
+  };
+
+  /*
+   * Private Methods
+   */
+
+  privateMethods.logInteraction = function _logInteraction() {
+    return headerAnalytics.logEvent('header click', ['header', 'logo'].join('>'));
+  };
+
+  /*
+   * Public Methods
+   */
+  module.getPrivateMethods = function getPrivateMethods() {
+    return privateMethods;
+  };
+
+  module.init = function _init(_config) {
+    var logoConfig = (_config || config);
+
+    // Patch for hoverintent listening
+    $(document).on('click touchend', logoConfig.logoSelector, privateMethods.logInteraction);
+  };
+
+  module.config = config;
+
+  return module;
+});

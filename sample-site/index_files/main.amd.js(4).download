@@ -1,0 +1,207 @@
+define(["cookie-utils"], function(__WEBPACK_EXTERNAL_MODULE_2__) { return /******/ (function(modules) { // webpackBootstrap
+/******/ 	// The module cache
+/******/ 	var installedModules = {};
+/******/
+/******/ 	// The require function
+/******/ 	function __webpack_require__(moduleId) {
+/******/
+/******/ 		// Check if module is in cache
+/******/ 		if(installedModules[moduleId])
+/******/ 			return installedModules[moduleId].exports;
+/******/
+/******/ 		// Create a new module (and put it into the cache)
+/******/ 		var module = installedModules[moduleId] = {
+/******/ 			exports: {},
+/******/ 			id: moduleId,
+/******/ 			loaded: false
+/******/ 		};
+/******/
+/******/ 		// Execute the module function
+/******/ 		modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+/******/
+/******/ 		// Flag the module as loaded
+/******/ 		module.loaded = true;
+/******/
+/******/ 		// Return the exports of the module
+/******/ 		return module.exports;
+/******/ 	}
+/******/
+/******/
+/******/ 	// expose the modules object (__webpack_modules__)
+/******/ 	__webpack_require__.m = modules;
+/******/
+/******/ 	// expose the module cache
+/******/ 	__webpack_require__.c = installedModules;
+/******/
+/******/ 	// __webpack_public_path__
+/******/ 	__webpack_require__.p = "";
+/******/
+/******/ 	// Load entry module and return exports
+/******/ 	return __webpack_require__(0);
+/******/ })
+/************************************************************************/
+/******/ ([
+/* 0 */
+/***/ (function(module, exports, __webpack_require__) {
+
+	'use strict';
+	
+	var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; };
+	
+	var _helpers = __webpack_require__(1);
+	
+	var helpers = _interopRequireWildcard(_helpers);
+	
+	function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
+	
+	function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } } /* globals THD_GLOBAL */
+	
+	// import { cookieUtils } from 'cookieUtils';
+	var cookieUtils = __webpack_require__(2);
+	
+	var config = {
+	  cart_throttle_desktop: {
+	    globalName: 'desktopCartThrottle',
+	    key: 30
+	  },
+	  cart_throttle_mobile: {
+	    globalName: 'mobileCartThrottle',
+	    key: 29
+	  },
+	  data_collection: {
+	    throttle: 'dataCapture',
+	    key: 31
+	  }
+	};
+	
+	var ClientThrottle = function () {
+	  function ClientThrottle(_ref) {
+	    var throttlePercent = _ref.throttlePercent,
+	        key = _ref.key;
+	
+	    _classCallCheck(this, ClientThrottle);
+	
+	    this.key = key;
+	    this.throttlePercent = typeof throttlePercent === 'undefined' ? 0 : throttlePercent;
+	  }
+	
+	  ClientThrottle.prototype.getThrottleValue = function getThrottleValue() {
+	    /* istanbul ignore if */
+	    if (!cookieUtils.cookieManager) {
+	      // Must initialize first to avoid issues during load
+	      cookieUtils.initializeCookieManager();
+	    }
+	
+	    cookieUtils.initializeMasterCookie();
+	
+	    var key = this.key;
+	    var throttleValueFromCookie = helpers.getThrottleFromCookie({ key: key });
+	    var randomNumber = Math.floor(Math.random() * 100);
+	    // if no throttle cookie, set to 0
+	    var throttlePercent = typeof this.throttlePercent !== 'undefined' ? this.throttlePercent : 0;
+	    var throttleValue = 0;
+	
+	    if (throttlePercent === 0 || throttlePercent === 100) {
+	      throttleValue = throttlePercent === 100 ? 1 : 0;
+	    } else if (typeof throttleValueFromCookie === 'number') {
+	      console.log('cookie value is a number');
+	      throttleValue = throttleValueFromCookie;
+	    } else if (throttlePercent > randomNumber) {
+	      console.log('throttle percent is >');
+	      throttleValue = 1;
+	    }
+	
+	    helpers.setThrottleForCookie({ key: key, throttleValue: throttleValue });
+	
+	    return throttleValue;
+	  };
+	
+	  return ClientThrottle;
+	}();
+	
+	var isOn = function isOn(throttleConfig) {
+	  var argType = typeof throttleConfig === 'undefined' ? 'undefined' : _typeof(throttleConfig);
+	  var result = null;
+	  var localConfig = throttleConfig;
+	
+	  // find the config object if given a name string
+	  if (argType === 'string') {
+	    localConfig = config[throttleConfig];
+	  }
+	
+	  // Use config info to find the current throttle value
+	  if (localConfig && localConfig.globalName) {
+	    localConfig.throttlePercent = window.THD_GLOBAL[localConfig.globalName];
+	  } else if (localConfig && localConfig.throttle) {
+	    localConfig.throttlePercent = window.THD_GLOBAL.throttle[localConfig.throttle];
+	  }
+	
+	  // assuming we have a valid config, get the real value
+	  if (localConfig && localConfig.hasOwnProperty('key') && localConfig.hasOwnProperty('throttlePercent')) {
+	    var throttle = new ClientThrottle(localConfig);
+	    result = Boolean(throttle.getThrottleValue());
+	  }
+	
+	  return result;
+	};
+	
+	module.exports = {
+	  ClientThrottle: ClientThrottle,
+	  isOn: isOn,
+	  config: config
+	};
+
+/***/ }),
+/* 1 */
+/***/ (function(module, exports, __webpack_require__) {
+
+	'use strict';
+	
+	var cookieUtils = __webpack_require__(2);
+	
+	var getThrottleFromCookie = function getThrottleFromCookie(_ref) {
+	  var key = _ref.key;
+	
+	  var throttle = cookieUtils.readCookie('FEATURE_THROTTLE');
+	  if (!throttle) return null;
+	  var index = throttle.split('-').indexOf(key + '.0');
+	  index = index === -1 ? throttle.split('-').indexOf(key + '.1') : index;
+	  if (index === -1) return null;
+	  var throttleValue = throttle.split('-')[index];
+	  var value = parseInt(throttleValue.split('.')[1], 10);
+	  return parseInt(throttleValue.split('.')[1], 10);
+	};
+	
+	var setThrottleForCookie = function setThrottleForCookie(_ref2) {
+	  var key = _ref2.key,
+	      throttleValue = _ref2.throttleValue;
+	
+	  var throttle = cookieUtils.readCookie('FEATURE_THROTTLE');
+	  var throttleArr = [];
+	  var throttleString = key + '.' + throttleValue;
+	  if (throttle) {
+	    throttleArr = throttle.split('-');
+	    throttleArr = throttleArr.map(function (throttleIndex) {
+	      return throttleIndex.indexOf(key + '.') !== -1 ? throttleString : throttleIndex;
+	    });
+	    throttle = throttleArr.join('');
+	  } else {
+	    throttle += throttleString;
+	  }
+	  cookieUtils.createCookie('FEATURE_THROTTLE', throttle, 1);
+	};
+	
+	module.exports = {
+	  getThrottleFromCookie: getThrottleFromCookie,
+	  setThrottleForCookie: setThrottleForCookie
+	};
+
+/***/ }),
+/* 2 */
+/***/ (function(module, exports) {
+
+	module.exports = __WEBPACK_EXTERNAL_MODULE_2__;
+
+/***/ })
+/******/ ])});;
+//# sourceMappingURL=main.amd.js.map

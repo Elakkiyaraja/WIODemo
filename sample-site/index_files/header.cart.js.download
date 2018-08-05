@@ -1,0 +1,299 @@
+/* global define */
+/*
+  Purpose:
+    - Updates the cart button and determines if the cart dropdown should be created.
+  Dependencies:
+    - THD Namespace
+    - jquery
+    - mustache
+
+*/
+
+(function closure(root, factory) {
+  var _hfapp;
+  /* istanbul ignore else  */
+  if (typeof define === 'function' && define.amd) {
+    define('header.cart', ['jquery', 'mustache', 'global.namespace', 'global.utility', 'cookie-utils', 'utils.minicart', 'header.data', 'header.analytics', 'plugin.tooltip'],
+      function loader(jQuery, Mustache, THD, globalUtility, cookieUtils, minicart, headerData, headerAnalytics) {
+        return factory(root, jQuery, Mustache, THD, globalUtility, cookieUtils, minicart, headerData, headerAnalytics);
+      });
+  } else {
+    // For non-AMD module, expose this to global (will also be useful for test cases)
+    /* eslint-disable*/
+    _hfapp = THD.Utility.Namespace.createNamespace('THD.HFApp');
+    _hfapp.cart = factory(root, root.jQuery, root.Mustache, THD, THD.Utility.Config, cookieUtils, THD.Utility.MiniCart, THD.HFApp.data, HFApp.analytics);
+    /* eslint-enable*/
+  }
+})(this, function factory(root, $, Mustache, THD, globalUtility, cookieUtils, minicart, headerData, headerAnalytics) {
+  var cart = {};
+  // Private methods
+  var privateMethods = {};
+  var templates = {};
+
+  templates.dropdown = '' +
+    '<div class="MyCart__dropdown">' +
+      '<div class="grid">' +
+        '<div class="col__12-12">' +
+          '<ul class="MyCart__list">' +
+            '{{#blinds}}' +
+              '<li class="MyCart__item">' +
+                '<a id="blindsDropdownLink" href="https://{{determineBlindsHostName}}/Ordering/Cart" class="MyCart__link">Blinds Samples' +
+                  '<span class="MyCart__count">{{blinds}} item{{blindsPlural}}</span>' +
+                '</a>' +
+              '</li>' +
+            '{{/blinds}}' +
+            '{{#mini}}' +
+            '<li class="MyCart__item">' +
+              '<a id="cartDropdownLink" href="http://{{hostNameNonSecure}}/{{cartURLWithThrottle}}" class="MyCart__link">Cart' +
+                '<span class="MyCart__count">{{mini}} item{{miniPlural}}</span>' +
+              '</a>' +
+            '</li>' +
+            '{{/mini}}' +
+          '</ul>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+  '';
+
+  // if there are only blinds products in the cart then we need to update the cart link
+  privateMethods.updateCartUrl = function _updateCartUrl($cartBtn) {
+    var blinds = privateMethods.blinds;
+    var mini = privateMethods.mini;
+
+    var cartLink = (blinds > 0 && mini === 0)
+      ? 'https://' + privateMethods.determineBlindsHostName() + '/Ordering/Cart'
+      : '//' + privateMethods.hostNameNonSecure() + '/' + privateMethods.cartURLWithThrottle();
+
+
+    $cartBtn.attr('href', cartLink);
+  };
+
+  privateMethods.updateCartUrlforSecure = function _updateCartUrlforSecure($cartElement) {
+   var newCartLink;
+   var $cartElement = $('#headerCart');
+	if(location.protocol == "https:"){
+		newCartLink = 'https://'+globalUtility.getHostNameSecure()+'/mycart/home';
+
+	}
+
+    $cartElement.attr('href', newCartLink);
+  };
+
+  // sets the blinds host name
+  privateMethods.determineBlindsHostName = function determineBlindsHostName() {
+    return (root.location.host.indexOf('hd-') === -1)
+      ? 'blinds.homedepot.com'
+      : 'qa-blinds.' + globalUtility.getHostNameNonSecure();
+  };
+
+  // sets the protocol
+   /* istanbul ignore next */
+  privateMethods.determineHostName = function determineHostName() {
+    return root.location.protocol === 'http:'
+      ? globalUtility.getHostNameNonSecure()
+      : globalUtility.getHostNameSecure();
+  };
+
+  // wrapper to get non secure domain for desktop-tablet checkout
+  privateMethods.hostNameNonSecure = function hostNameNonSecure() {
+    return globalUtility.getHostNameNonSecure();
+  };
+
+  // determine if the drop down should be shown if we have blinds and merch in the cart
+  privateMethods.showCartDropdown = function showCartDropdown() {
+    return privateMethods.blinds !== '0' && privateMethods.mini !== '0';
+  };
+
+  // determines if to make "blinds item(s)" plural
+  privateMethods.blindsPlural = function blindsPlural() {
+    return privateMethods.blinds >= 2 ? 's' : '';
+  };
+
+  // determines if to make "cart item(s)" plural
+  privateMethods.miniPlural = function miniPlural() {
+    return privateMethods.mini >= 2 ? 's' : '';
+  };
+
+  // calculate the cart total to show
+  privateMethods.total = function getTotal() {
+    var blinds = privateMethods.blinds;
+    var mini = privateMethods.mini;
+    var total = (blinds + mini);
+
+    return total > 99 ? '99+' : total;
+  };
+
+  privateMethods.getCartItemsText = function _getCartItemsText(itemCount) {
+    var unit = ((parseInt(itemCount, 10) === 1) ? 'item' : 'items');
+    return (unit);
+  };
+
+  // updates the cart totals
+  privateMethods.updateCartTotal = function _updateCartTotal($cartBtn) {
+    var total = privateMethods.total();
+    var isCartEmpty = privateMethods.isCartEmpty();
+
+    $cartBtn.find('.MyCart__itemCount').text(total);
+    $cartBtn.find('.MyCart__itemCount__label').text(privateMethods.getCartItemsText(total));
+
+    $cartBtn.find('.HeaderCartIcon .MyCart__contents').toggleClass('hide', isCartEmpty);
+
+    return privateMethods;
+  };
+
+  // replete means "filled"
+  privateMethods.isCartEmpty = function _isCartEmpty() {
+    return (privateMethods.total() === 0);
+  };
+
+  // determine if the cart is replete with items
+  privateMethods.updateCartIcon = function _updateCartIcon($cartDisplay) {
+    var cartHasItems = !privateMethods.isCartEmpty();
+    var $cartIcon = $cartDisplay.find('.MyCart__icon');
+
+    $cartIcon.find('.HeaderIcon__primary')
+      .toggleClass('HeaderIcon__primary--active', cartHasItems);
+
+    $cartIcon.find('.HeaderIcon__secondary')
+      .toggleClass('HeaderIcon__secondary--active', cartHasItems);
+  };
+
+  privateMethods.forceInteger = function _forceInteger(value) {
+    return value ? parseInt(value, 10) : 0;
+  };
+
+  privateMethods.updateCartInfo = function _updateCartInfo() {
+    var $cartBtn = $('.MyCart');
+	var $cartElement = $('#headerCart');
+    privateMethods.blinds = privateMethods.forceInteger(cookieUtils.readBrowserCookie('Blinds_ComCartSamplesCount'));
+    privateMethods.mini = privateMethods.forceInteger(minicart.getTHDNumberItemsInCart());
+
+    // make public the fact that the cart drodpwn should be shown
+    THD.HeaderFooter = {
+      showCartDropdown: privateMethods.showCartDropdown()
+    };
+
+    privateMethods.updateCartTotal($cartBtn);
+
+    privateMethods.updateCartIcon($cartBtn);
+
+    privateMethods.updateCartUrl($cartBtn);
+
+	//privateMethods.updateCartUrlforSecure($cartElement);
+  };
+
+  privateMethods.logCartInteraction = function _logCartInteraction(event) {
+    var trackingItems = ['header', 'my cart'];
+    var itemText;
+
+    if (event) {
+      // This gets the item we want, then removes child elements to remove the "X items" text
+      itemText = $(this).closest('a').clone().find('*').remove().end().text().toLowerCase();
+
+      trackingItems.push(itemText);
+    }
+
+    return headerAnalytics.logEvent('header click', trackingItems.join('>'));
+  };
+
+  // on start determine to show cart dropdown, update totals, and change UI
+  privateMethods.onDomReady = function _onDomReady() {
+    privateMethods.updateCartInfo();
+
+    $('#headerCart').tooltip({
+      type: 'click',
+      noPad: true,
+      onOpen: function onCartOpen($tooltip, complete) {
+        if ((privateMethods.blinds > 0) && (privateMethods.mini > 0)) {
+          $tooltip.html(Mustache.render(templates.dropdown, privateMethods));
+
+          complete();
+        } else {
+          // record the event
+          privateMethods.logCartInteraction()
+            .then(function () {
+              complete(false);
+            });
+        }
+      }
+    });
+  };
+
+  privateMethods.cartURLWithThrottle = function _cartURLWithThrottle() {
+    return 'mycart/home';
+  };
+
+
+
+  privateMethods.getMiniCartToolTipHeight = function _getMiniCartToolTipHeight(){
+      var minicartIFrameContentHeight = 520;
+      try{
+          minicartIFrameContentHeight = $('#minicartIFrame').contents().height();
+      }
+      catch(err){
+          console.log("Minicart IFrame not loaded yet");
+      }
+      return (window.location.host.indexOf('localhost') > -1 ||  typeof $('#minicartIFrame').contents() === 'undefined') ? 520  : minicartIFrameContentHeight;
+  }
+
+  privateMethods.setCartDropdownHeight = function _setCartDropdownHeight(){
+    $('#minicartIFrame').on('load', function(){
+      //your code (will be called once iframe is done loading)
+      var currentIFrameHeight = privateMethods.getMiniCartToolTipHeight();
+      var currentTooltip = $('#minicartIFrame').closest('[id*="tooltip"]');
+      currentTooltip.css('height', currentIFrameHeight+'px').css('max-height', currentIFrameHeight+'px');
+      $('#minicartIFrame').css('height', currentIFrameHeight+'px');
+      $('#minicartIFrame').closest('.ToolTip__wrapper').css('width', '285px').css('height', currentIFrameHeight+'px');
+      $('.ToolTip__wrapper #minicartIFrame').on('mouseleave', function() {
+        if (cart.init.hasTooltip || !currentTooltip.hasClass('ToolTip--closed')) {
+          $('#headerCart').click();
+          cart.init.hasTooltip = false;
+        }
+      });
+   });
+  }
+
+
+  /*
+   * Public Methods
+   */
+
+  // Default Value
+  cart.cartThrottle = true;
+  cart.init = function init() {
+      if (headerData.showMiniCart()){
+          // open popup on click of cart
+          $('#headerCart').tooltip({
+              type: 'customHover',
+              noPad: true,
+              closeOnClick: true,
+              onOpen: function _onOpenTooltip($tooltip, complete) {
+                  $('#minicartIFrame')
+                      .attr('src', 'https://'+ window.location.hostname +'/mycart/minicart')
+                      .removeClass('hide')
+                      .appendTo($tooltip);
+
+                  complete();
+                  privateMethods.setCartDropdownHeight();
+              }
+          });
+
+          cart.init.hasTooltip = false;
+      }
+
+    // Delegates and ready initailizer
+    $(document)
+      .on('touchend click', '.MyCart__dropdown .MyCart__link', privateMethods.logCartInteraction)
+      .on('cartUpdated', privateMethods.updateCartInfo)
+      .on('searchState', privateMethods.closeOnSearchOpen)
+      .ready(privateMethods.onDomReady);
+
+    return this;
+  };
+
+  cart.getPrivateMethods = function getPrivateMethods() {
+    return privateMethods;
+  };
+
+  return cart;
+});

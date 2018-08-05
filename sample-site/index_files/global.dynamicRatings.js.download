@@ -1,0 +1,44 @@
+/* --------------------------------------------------------------------------------------------------
+	dynamic product ratings display primarlly for Certona
+--------------------------------------------------------------------------------------------------*/
+'use strict';
+(function closure(root, factory) {
+	if(typeof define === 'function' && define.amd) {
+		define(['jquery'],
+			function load($) {
+				return factory(root, $);
+			});
+	} else {
+			// For non-AMD module, expose this to global (will also be useful for test cases)
+			/* eslint-disable*/
+			factory(root, jQuery);
+			/*eslint-enable*/
+	}
+})(this, function factory(root, $) {
+	var dynamicRatings = function dynamicRatings() {
+		var obj = $('#container').find('span.stars');
+		var i;
+		var avgRating;
+		var RatingNumber;
+		var $this;
+
+		for (i = 0; i < $(obj).length; i += 1) {
+			$this = $(obj).eq(i);
+			avgRating = $this.attr('rel');
+			RatingNumber = avgRating * 20;
+
+			if (avgRating === 'noRating' || RatingNumber === '0.0') {
+				$this.parent().css('background-position', '0px -62px').width('0px'); // need to make this a class
+			} else {
+				$this.css('width', RatingNumber + '%');
+			}
+		}
+	};
+
+	return {
+		init: function init() {
+			$(window).load(dynamicRatings);
+		},
+		dynamicRatings: dynamicRatings
+	};
+});

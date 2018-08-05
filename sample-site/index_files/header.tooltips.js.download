@@ -1,0 +1,76 @@
+/* globals define */
+/*
+  Purpose:
+    - to handle closing of header tooltips and triggering events when tooltip is open
+
+  Dependencies
+    - jquery
+
+*/
+
+(function closure(root, factory) {
+  /* istanbul ignore else  */
+  if (typeof define === 'function' && define.amd) {
+    define('header.tooltips', ['jquery'],
+      function load(jQuery) {
+        return factory(root, jQuery);
+      });
+  } else {
+    // For non-AMD module, expose this to global (will also be useful for test cases)
+    /*eslint-disable*/
+    var _hfapp = THD.Utility.Namespace.createNamespace('THD.HFApp');
+    _hfapp.tooltips = factory(root, jQuery);
+    /*eslint-enable*/
+  }
+})(this, function factory(root, $) {
+  //debugger;
+  var tooltips = {};
+  var privateMethods = {};
+
+  privateMethods.closeHeaderTooltips = function _closeHeaderTooltips(){
+    $('#headerCart').tooltip('close');
+    $('#headerMyAccount').tooltip('close');
+    $(document).trigger('closeStoreFinder', false);
+  }
+
+  privateMethods.openingHeaderToolTip = function _openingHeaderToolTip(event, data){
+    $(document).trigger('showSimpleFlyout', false);
+    $(document).trigger('closeAllMenus');
+
+    if(data !== 'storefinder'){
+      $(document).trigger('closeStoreFinder', false);
+    }
+  }
+
+  privateMethods.breakpointChanged = function _breakpointChanged(event, eventInfo) {
+    var newInList = ['lg', 'md', 'sm'].indexOf(eventInfo.new);
+    var oldInList = ['default', 'xs'].indexOf(eventInfo.old);
+
+    // If we're in a smaller break point
+    if ((newInList === -1) && (oldInList === -1)) {
+      privateMethods.closeHeaderTooltips();
+    }
+  };
+
+  privateMethods.initialize = function initialize() {
+    $(document)
+      .on('closeHeaderTooltips', privateMethods.closeHeaderTooltips)
+      .on('openingHeaderToolTip', privateMethods.openingHeaderToolTip)
+      .on('searchState', privateMethods.closeHeaderTooltips)
+      .on('breakpointChanged', privateMethods.breakpointChanged)
+      .on('hideHeaderDropdowns', privateMethods.closeHeaderTooltips);
+  };
+
+  /*
+   * Public Methods
+   */
+   tooltips.init = function init() {
+    privateMethods.initialize();
+
+    return this;
+  };
+
+
+  return tooltips;
+
+});
